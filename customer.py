@@ -5,6 +5,8 @@ customer.py
 A greenlet to represent a single nimbus.io customer
 """
 import logging
+import random
+import time
 
 from  gevent.greenlet import Greenlet
 
@@ -17,11 +19,21 @@ class Customer(Greenlet):
     """
     def __init__(self, halt_event, test_spec, pub_queue):
         Greenlet.__init__(self)
-        self._log = logging.getLogger(test_spec["Username"])
+        self._log = logging.getLogger(test_spec["username"])
         self._halt_event = halt_event
         self._test_spec = test_spec
         self._pub_queue = pub_queue
         self._s3_connection = None
+        self._buckets = dict()
+        self._keys_by_bucket = dict()
+        self._dispatch_table = {
+            "create-bucket" : self._create_bucket,
+            "delete-bucket" : self._delete_bucket,
+            "archive"       : self._archive,
+            "retrieve"      : self._retrieve,
+            "delete-key"    : self._delete_key,
+        }
+        self._frequency_table = list()
 
     def join(self, timeout=None):
         """
@@ -34,13 +46,102 @@ class Customer(Greenlet):
     def _run(self):
         # the JSON data comes in as unicode. This does bad things to the key
         config = config_template(
-            user_name=self._test_spec["Username"], 
-            auth_key_id=self._test_spec["AuthKeyId"], 
-            auth_key=str(self._test_spec["AuthKey"])
+            user_name=self._test_spec["username"], 
+            auth_key_id=self._test_spec["auth-key-id"], 
+            auth_key=str(self._test_spec["auth-key"])
         )
         self._s3_connection = motoboto.connect_s3(config=config)
-        buckets = self._s3_connection.get_all_buckets()
+
+        self._initial_inventory()
+        self._load_frequency_table()
+
+        # do an initial delay so all customers don't start at once
+        self._delay()
 
         while not self._halt_event.is_set():
-            self._halt_event.wait(1.0)
+            # run a randomly selected test function
+            test_function = self._frequency_table[random.randint(0, 99)]
+            test_function()
+            self._delay()
+
+    def _initial_inventory(self):
+        """get an initial inventory of buckets and files"""
+        buckets = self._s3_connection.get_all_buckets()
+        for bucket in buckets:
+            self._log.info("_initial_inventory found bucket %r" % (
+                bucket.name,
+            ))
+            self._buckets[bucket.name] = bucket
+            keys = bucket.get_all_keys()
+            for key in keys:
+                self._log.info("_initial_inventory found key %r, %r" % (
+                    bucket.name, key,
+                ))
+                self._keys_by_bucket[bucket.name] = key
+
+    def _load_frequency_table(self):
+        """
+        for each action specfied in the distribution append n instances
+        of the corresponding function object. We will choose a random number 
+        between 0 and 99, to select a test action        
+        """
+        for key in self._test_spec["distribution"].keys():
+            count = self._test_spec["distribution"][key]
+            for _ in xrange(count):
+                self._frequency_table.append(self._dispatch_table[key])
+        assert len(self._frequency_table) == 100
+
+    def _delay(self):
+        """wait for a (delimted) random time"""
+        delay_size = random.uniform(
+            self._test_spec["low-delay"], self._test_spec["high-delay"]
+        )
+        self._halt_event.wait(delay_size)
+
+    def _create_bucket(self):
+        event_message = {
+            "message-type"  : "create-bucket",
+            "start-time"    : time.time(),
+            "end-time"      : None,
+        }
+        event_message["end-time"] = time.time()
+        self._pub_queue.put((event_message, None, ))
+
+    def _delete_bucket(self):
+        event_message = {
+            "message-type"  : "delete-bucket",
+            "start-time"    : time.time(),
+            "end-time"      : None,
+        }
+        event_message["end-time"] = time.time()
+        self._pub_queue.put((event_message, None, ))
+
+    def _archive(self):
+        event_message = {
+            "message-type"  : "archive",
+            "start-time"    : time.time(),
+            "end-time"      : None,
+            "size"          : None,
+        }
+        event_message["end-time"] = time.time()
+        self._pub_queue.put((event_message, None, ))
+
+    def _retrieve(self):
+        event_message = {
+            "message-type"  : "retrieve",
+            "start-time"    : time.time(),
+            "end-time"      : None,
+            "size"          : None,
+        }
+        event_message["end-time"] = time.time()
+        self._pub_queue.put((event_message, None, ))
+
+    def _delete_key(self):
+        event_message = {
+            "message-type"  : "delete-key",
+            "start-time"    : time.time(),
+            "end-time"      : None,
+        }
+        event_message["end-time"] = time.time()
+        self._pub_queue.put((event_message, None, ))
 

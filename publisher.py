@@ -37,7 +37,7 @@ class Publisher(Greenlet):
 
         while not self._halt_event.is_set():
             message, body = self._pub_queue.get()
-            self._log.info(str(message))
+            self._log.debug(str(message))
         
             self._pub_socket.send(message["message-type"], zmq.SNDMORE)
             if body is not None and len(body) > 0:

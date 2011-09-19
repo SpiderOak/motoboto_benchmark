@@ -28,7 +28,10 @@ from customer import Customer
 
 _log_path = "motoboto_benchmark.log"
 _log_format_template = u'%(asctime)s %(levelname)-8s %(name)-20s: %(message)s'
-_pub_address = "ipc:///tmp/motoboto_benchmark-main-pub/socket"
+_pub_address = os.environ.get(
+    "MOTOBOTO_BENCHMARK_PUB_ADDRESS", 
+    "ipc:///tmp/motoboto_benchmark-main-pub/socket"
+)
 
 def _handle_sigterm(halt_event):
     halt_event.set()
@@ -101,7 +104,8 @@ def main():
     context = zmq.Context()
     pub_queue = Queue()
 
-    _prepare_ipc_path(_pub_address)
+    if _pub_address.startswith("ipc://"):
+        _prepare_ipc_path(_pub_address)
 
     publisher = Publisher(halt_event, context, _pub_address, pub_queue)
 
