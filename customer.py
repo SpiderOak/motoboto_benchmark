@@ -12,6 +12,14 @@ from  gevent.greenlet import Greenlet
 
 import motoboto
 from motoboto.config import config_template
+from motoboto.s3.key import Key
+
+from lumberyard.http_util import compute_default_collection_name
+
+from mock_input_file import MockInputFile
+from mock_output_file import MockOutputFile
+from bucket_name_manager import BucketNameManager
+from key_name_manager import KeyNameManager
 
 class Customer(Greenlet):
     """
@@ -23,9 +31,15 @@ class Customer(Greenlet):
         self._halt_event = halt_event
         self._test_spec = test_spec
         self._pub_queue = pub_queue
+
+        self._default_collection_name = compute_default_collection_name(
+            test_spec["username"]
+        )
         self._s3_connection = None
+
         self._buckets = dict()
         self._keys_by_bucket = dict()
+
         self._dispatch_table = {
             "create-bucket" : self._create_bucket,
             "delete-bucket" : self._delete_bucket,
@@ -34,6 +48,12 @@ class Customer(Greenlet):
             "delete-key"    : self._delete_key,
         }
         self._frequency_table = list()
+
+        self._bucket_name_manager = BucketNameManager(test_spec["username"]) 
+        self._bucket_name_generator = None
+
+        self._key_name_manager = KeyNameManager() 
+        self._key_name_generator = None
 
     def join(self, timeout=None):
         """
@@ -55,6 +75,10 @@ class Customer(Greenlet):
         self._initial_inventory()
         self._load_frequency_table()
 
+        self._bucket_name_generator = \
+                self._bucket_name_manager.bucket_name_generator()
+        self._key_name_generator = self._key_name_manager.key_name_generator()
+
         # do an initial delay so all customers don't start at once
         self._delay()
 
@@ -72,12 +96,16 @@ class Customer(Greenlet):
                 bucket.name,
             ))
             self._buckets[bucket.name] = bucket
+            self._bucket_name_manager.existing_bucket_name(bucket.name)
             keys = bucket.get_all_keys()
             for key in keys:
                 self._log.info("_initial_inventory found key %r, %r" % (
                     bucket.name, key,
                 ))
-                self._keys_by_bucket[bucket.name] = key
+                if not bucket.name in self._keys_by_bucket[bucket.name]:
+                    self._keys_by_bucket[bucket.name] = list()
+                self._keys_by_bucket[bucket.name].append(key)
+                self._key_name_manager.existing_key_name(key.name)
 
     def _load_frequency_table(self):
         """
@@ -104,6 +132,10 @@ class Customer(Greenlet):
             "start-time"    : time.time(),
             "end-time"      : None,
         }
+        bucket_name = self._bucket_name_generator(next)
+        self._log.info("create bucket %r" % (bucket_name, ))
+        new_bucket = self._s3_connection.create_bucket(bucket_name)
+        self._buckets[new_bucket.name] = new_bucket  
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
@@ -113,6 +145,25 @@ class Customer(Greenlet):
             "start-time"    : time.time(),
             "end-time"      : None,
         }
+        eligible_bucket_names = [
+            k for k in self._buckets.keys() \
+            if k != self._default_collection_name
+        ]
+        if len(eligible_bucket_names) == 0:
+            self._log.warn("no buckets eligible for deletion")
+            return
+
+        bucket_name = random.choice(eligible_bucket_names)
+        self._log.info("delete bucket %r" % (bucket_name, ))
+        bucket = self._buckets.pop(bucket_name)
+
+        # delete al the keys for the bucket
+        if bucket.name in self._keys_by_bucket:
+            for key in self._keys_by_bucket.pop(bucket.name):
+                key.delete()
+
+        self._s3_connection.delete_bucket(bucket.name)
+        
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
@@ -123,6 +174,25 @@ class Customer(Greenlet):
             "end-time"      : None,
             "size"          : None,
         }
+
+        # pick a bucket
+        bucket_name = random.choice(self._buckets.keys())
+        bucket = self._buckets[bucket_name]
+        key = Key(bucket)
+        key_name = self._key_name_generator.next()
+        key.name = key_name
+        size = random.randint(
+            self._test_spec["min-file-size"],
+            self._test_spec["max-file-size"]
+        )
+        self._log.info("archiving %r into %r %s" % (
+            key_name, bucket_name, size, 
+        ))
+
+        input_file = MockInputFile(size)
+        key.set_contents_from_file(input_file)
+
+        event_message["size"] = size
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
