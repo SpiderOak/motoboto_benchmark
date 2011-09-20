@@ -102,7 +102,7 @@ class Customer(Greenlet):
                 self._log.info("_initial_inventory found key %r, %r" % (
                     bucket.name, key,
                 ))
-                if not bucket.name in self._keys_by_bucket[bucket.name]:
+                if not bucket.name in self._keys_by_bucket:
                     self._keys_by_bucket[bucket.name] = list()
                 self._keys_by_bucket[bucket.name].append(key)
                 self._key_name_manager.existing_key_name(key.name)
@@ -132,7 +132,7 @@ class Customer(Greenlet):
             "start-time"    : time.time(),
             "end-time"      : None,
         }
-        bucket_name = self._bucket_name_generator(next)
+        bucket_name = self._bucket_name_generator.next()
         self._log.info("create bucket %r" % (bucket_name, ))
         new_bucket = self._s3_connection.create_bucket(bucket_name)
         self._buckets[new_bucket.name] = new_bucket  
@@ -176,8 +176,7 @@ class Customer(Greenlet):
         }
 
         # pick a bucket
-        bucket_name = random.choice(self._buckets.keys())
-        bucket = self._buckets[bucket_name]
+        bucket = random.choice(self._buckets.values())
         key = Key(bucket)
         key_name = self._key_name_generator.next()
         key.name = key_name
@@ -186,11 +185,18 @@ class Customer(Greenlet):
             self._test_spec["max-file-size"]
         )
         self._log.info("archiving %r into %r %s" % (
-            key_name, bucket_name, size, 
+            key_name, bucket.name, size, 
         ))
 
-        input_file = MockInputFile(size)
-        key.set_contents_from_file(input_file)
+        # I can't persuade HTTPRequest to use the mock file
+        # got to send a string until I figure it out
+#        input_file = MockInputFile(size)
+#        key.set_contents_from_file(input_file)
+        key.set_contents_from_string("a" * size)
+
+        if not bucket.name in self._keys_by_bucket:
+            self._keys_by_bucket[bucket.name] = list()
+        self._keys_by_bucket[bucket.name].append(key)
 
         event_message["size"] = size
         event_message["end-time"] = time.time()
@@ -203,6 +209,25 @@ class Customer(Greenlet):
             "end-time"      : None,
             "size"          : None,
         }
+
+        # if we don't have any keys yet, we have to skip this
+        if len(self._keys_by_bucket) == 0:
+            self._log.warn("skipping _retrieve, no keys yet")
+            return
+        
+        # pick a random key from a random bucket
+        key_list = random.choice(self._keys_by_bucket.values())
+        key = random.choice(key_list)
+
+        self._log.info("retrieving %r from %r" % (
+            key.name, key._bucket.name, 
+        ))
+
+        output_file = MockOutputFile()
+
+        key.get_contents_to_file(output_file)
+
+        event_message["size"] = output_file.bytes_written()
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
@@ -212,6 +237,18 @@ class Customer(Greenlet):
             "start-time"    : time.time(),
             "end-time"      : None,
         }
+
+        # pop a random key from a random bucket
+        bucket_name = random.choice(self._keys_by_bucket.keys())
+        key_list = self._keys_by_bucket[bucket_name]
+        key = random.choice(key_list)
+        key_list.remove(key)
+        if len(key_list) == 0:
+            del self._keys_by_bucket[bucket_name]
+
+        self._log.info("deleting %r from %r" % (key.name, bucket_name, ))
+        key.delete()
+
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
