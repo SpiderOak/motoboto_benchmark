@@ -100,7 +100,7 @@ class Customer(Greenlet):
             keys = bucket.get_all_keys()
             for key in keys:
                 self._log.info("_initial_inventory found key %r, %r" % (
-                    bucket.name, key,
+                    key.name, bucket.name,
                 ))
                 if not bucket.name in self._keys_by_bucket:
                     self._keys_by_bucket[bucket.name] = list()
