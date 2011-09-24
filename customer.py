@@ -132,6 +132,11 @@ class Customer(Greenlet):
             "start-time"    : time.time(),
             "end-time"      : None,
         }
+        if len(self._buckets) >= self._test_spec["max-bucket-count"]:
+            self._log.info("ignore _create_bucket: already have %s buckets" % (
+                len(self._buckets),
+            ))
+            return
         bucket_name = self._bucket_name_generator.next()
         self._log.info("create bucket %r" % (bucket_name, ))
         new_bucket = self._s3_connection.create_bucket(bucket_name)
@@ -227,7 +232,7 @@ class Customer(Greenlet):
 
         key.get_contents_to_file(output_file)
 
-        event_message["size"] = output_file.bytes_written()
+        event_message["size"] = output_file.bytes_written
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
