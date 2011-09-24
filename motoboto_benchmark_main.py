@@ -28,6 +28,7 @@ from customer import Customer
 
 _log_path = "motoboto_benchmark.log"
 _log_format_template = u'%(asctime)s %(levelname)-8s %(name)-20s: %(message)s'
+_default_test_duration = 60 * 60
 _pub_address = os.environ.get(
     "MOTOBOTO_BENCHMARK_PUB_ADDRESS", 
     "ipc:///tmp/motoboto_benchmark-main-pub/socket"
@@ -61,8 +62,13 @@ def _parse_command_line():
         '-t', "--test-dir", dest="test_dir", type="string",
         help="path to a directory containing JSON test definition files"
     )
+    parser.add_option(
+        '-d', "--test-duration", dest="test_duration", type="int",
+        help="Number of seconds for the test ro run"
+    )
 
     parser.set_defaults(log_path=_log_path)
+    parser.set_defaults(test_duration=_default_test_duration)
 
     options, _ = parser.parse_args()
 
@@ -125,7 +131,7 @@ def main():
 
     log.info("waiting")
     try:
-        halt_event.wait()
+        halt_event.wait(options.test_duration)
     except KeyboardInterrupt:
         log.info("KeyBoardInterrupt")
         halt_event.set()
