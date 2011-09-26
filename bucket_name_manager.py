@@ -13,10 +13,12 @@ class BucketNameManager(object):
     """
     generate unique bucket names
     """
-    def __init__(self, username):
+    def __init__(self, username, max_bucket_value):
         self._username = username
         self._bucket_prefix = compute_reserved_collection_name(username, "")
-        self._max_bucket_value = 0
+        self._max_bucket_value = max_bucket_value
+        self._highest_bucket_value = 0
+        self._deleted_bucket_names = list()
 
     def existing_bucket_name(self, bucket_name):
         """
@@ -24,13 +26,25 @@ class BucketNameManager(object):
         """
         if bucket_name.startswith(self._bucket_prefix):
             bucket_value = int(bucket_name[len(self._bucket_prefix):])
-            self._max_bucket_value = max(self._max_bucket_value, bucket_value)
-
-    def bucket_name_generator(self):
-        while True:
-            self._max_bucket_value += 1
-            yield compute_reserved_collection_name(
-                self._username, 
-                _bucket_name_template % (self._max_bucket_value, ) 
+            assert bucket_value <= self._max_bucket_value
+            self._highest_bucket_value = max(
+                self._highest_bucket_value, bucket_value
             )
+
+    def deleted_bucket_name(self, deleted_bucket_name):
+        if not deleted_bucket_name in self._deleted_bucket_names:
+            self._deleted_bucket_names.append(deleted_bucket_name)
+
+    def next(self):
+        if self._highest_bucket_value < self._max_bucket_value:
+            self._highest_bucket_value += 1
+            return compute_reserved_collection_name(
+                self._username, 
+                _bucket_name_template % (self._highest_bucket_value, ) 
+            )
+
+        if len(self._deleted_bucket_names) > 0:
+            return self._deleted_bucket_names.pop()
+
+        return None
 

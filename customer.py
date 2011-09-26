@@ -49,8 +49,10 @@ class Customer(Greenlet):
         }
         self._frequency_table = list()
 
-        self._bucket_name_manager = BucketNameManager(test_spec["username"]) 
-        self._bucket_name_generator = None
+        self._bucket_name_manager = BucketNameManager(
+            test_spec["username"],
+            test_spec["max-bucket-count"],
+        ) 
 
         self._key_name_manager = KeyNameManager() 
         self._key_name_generator = None
@@ -75,8 +77,6 @@ class Customer(Greenlet):
         self._initial_inventory()
         self._load_frequency_table()
 
-        self._bucket_name_generator = \
-                self._bucket_name_manager.bucket_name_generator()
         self._key_name_generator = self._key_name_manager.key_name_generator()
 
         # do an initial delay so all customers don't start at once
@@ -137,7 +137,10 @@ class Customer(Greenlet):
                 len(self._buckets),
             ))
             return
-        bucket_name = self._bucket_name_generator.next()
+        bucket_name = self._bucket_name_manager.next()
+        if bucket_name is None:
+            self._log.info("ignore _create_bucket")
+            return
         self._log.info("create bucket %r" % (bucket_name, ))
         new_bucket = self._s3_connection.create_bucket(bucket_name)
         self._buckets[new_bucket.name] = new_bucket  
@@ -162,10 +165,13 @@ class Customer(Greenlet):
         self._log.info("delete bucket %r" % (bucket_name, ))
         bucket = self._buckets.pop(bucket_name)
 
-        # delete al the keys for the bucket
+        self._bucket_name_manager.deleted_bucket_name(bucket_name)
+
+        # delete all the keys for the bucket
         if bucket.name in self._keys_by_bucket:
             for key in self._keys_by_bucket.pop(bucket.name):
                 key.delete()
+            del self._keys_by_bucket[bucket_name]
 
         self._s3_connection.delete_bucket(bucket.name)
         
