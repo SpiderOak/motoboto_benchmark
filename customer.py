@@ -171,7 +171,7 @@ class Customer(Greenlet):
         if bucket.name in self._keys_by_bucket:
             for key in self._keys_by_bucket.pop(bucket.name):
                 key.delete()
-            del self._keys_by_bucket[bucket_name]
+            del self._keys_by_bucket[bucket.name]
 
         self._s3_connection.delete_bucket(bucket.name)
         
@@ -180,14 +180,21 @@ class Customer(Greenlet):
 
     def _archive(self):
         event_message = {
-            "message-type"  : "archive",
-            "start-time"    : time.time(),
-            "end-time"      : None,
-            "size"          : None,
+            "message-type"      : "archive",
+            "start-time"        : time.time(),
+            "end-time"          : None,
+            "size"              : None,
+            "bytes-added-before": None,
+            "bytes-added-after" : None,
         }
 
         # pick a bucket
         bucket = random.choice(self._buckets.values())
+
+        # get its current stats
+        before_stats = bucket.get_space_used() 
+        event_message["bytes-added-before"] = before_stats["bytes_added"]
+
         key = Key(bucket)
         key_name = self._key_name_generator.next()
         key.name = key_name
@@ -196,7 +203,7 @@ class Customer(Greenlet):
             self._test_spec["max-file-size"]
         )
         self._log.info("archiving %r into %r %s" % (
-            key_name, bucket.name, size, 
+            key_name, bucket.name, size,
         ))
 
         # I can't persuade HTTPRequest to use the mock file
@@ -204,6 +211,18 @@ class Customer(Greenlet):
 #        input_file = MockInputFile(size)
 #        key.set_contents_from_file(input_file)
         key.set_contents_from_string("a" * size)
+
+        after_stats = bucket.get_space_used()
+        event_message["bytes-added-after"] = after_stats["bytes_added"]
+
+        if after_stats["bytes_added"] != before_stats["bytes_added"] + size:
+            self._log.error("%s:%r bytes_added: %s != %s + %s" % (
+                key.name, 
+                bucket.name, 
+                after_stats["bytes_added"],
+                before_stats["bytes_added"],
+                size, 
+            ))
 
         if not bucket.name in self._keys_by_bucket:
             self._keys_by_bucket[bucket.name] = list()
@@ -215,10 +234,12 @@ class Customer(Greenlet):
 
     def _retrieve(self):
         event_message = {
-            "message-type"  : "retrieve",
-            "start-time"    : time.time(),
-            "end-time"      : None,
-            "size"          : None,
+            "message-type"          : "retrieve",
+            "start-time"            : time.time(),
+            "end-time"              : None,
+            "size"                  : None,
+            "bytes-retrieved-before": None,
+            "bytes-retrieved-after" : None,
         }
 
         # if we don't have any keys yet, we have to skip this
@@ -230,6 +251,10 @@ class Customer(Greenlet):
         key_list = random.choice(self._keys_by_bucket.values())
         key = random.choice(key_list)
 
+        before_stats = key._bucket.get_space_used()
+        event_message["bytes-retrieved-before"] = \
+                before_stats["bytes_retrieved"]
+
         self._log.info("retrieving %r from %r" % (
             key.name, key._bucket.name, 
         ))
@@ -238,15 +263,31 @@ class Customer(Greenlet):
 
         key.get_contents_to_file(output_file)
 
+        after_stats = key._bucket.get_space_used()
+        event_message["bytes-retrieved-after"] = \
+                after_stats["bytes_retrieved"]
+
+        if after_stats["bytes_retrieved"] != \
+           before_stats["bytes_retrieved"] + output_file.bytes_written:
+            self._log.error("%s:%r bytes_retrieved: %s != %s + %s" % (
+                key.name, 
+                key._bucket.name, 
+                after_stats["bytes_retrieved"],
+                before_stats["bytes_retrieved"],
+                output_file.bytes_written, 
+            ))
+
         event_message["size"] = output_file.bytes_written
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
 
     def _delete_key(self):
         event_message = {
-            "message-type"  : "delete-key",
-            "start-time"    : time.time(),
-            "end-time"      : None,
+            "message-type"          : "delete-key",
+            "start-time"            : time.time(),
+            "end-time"              : None,
+            "bytes-removed-before"  : None,
+            "bytes-removed-after"   : None,
         }
 
         # pop a random key from a random bucket
@@ -257,8 +298,24 @@ class Customer(Greenlet):
         if len(key_list) == 0:
             del self._keys_by_bucket[bucket_name]
 
+        before_stats = key._bucket.get_space_used()
+        event_message["bytes-removed-before"] = \
+                before_stats["bytes_removed"]
+
         self._log.info("deleting %r from %r" % (key.name, bucket_name, ))
         key.delete()
+
+        after_stats = key._bucket.get_space_used()
+        event_message["bytes-removed-after"] = \
+                after_stats["bytes_removed"]
+
+        # TODO: get key size so we can verify this
+        self._log.info("%s:%r bytes_removed: %s %s" % (
+            key.name, 
+            key._bucket.name, 
+            after_stats["bytes_removed"],
+            before_stats["bytes_removed"],
+        ))
 
         event_message["end-time"] = time.time()
         self._pub_queue.put((event_message, None, ))
