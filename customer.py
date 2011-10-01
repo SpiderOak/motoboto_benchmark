@@ -103,8 +103,8 @@ class Customer(Greenlet):
                     key.name, bucket.name,
                 ))
                 if not bucket.name in self._keys_by_bucket:
-                    self._keys_by_bucket[bucket.name] = list()
-                self._keys_by_bucket[bucket.name].append(key)
+                    self._keys_by_bucket[bucket.name] = set()
+                self._keys_by_bucket[bucket.name].add(key)
                 self._key_name_manager.existing_key_name(key.name)
 
     def _load_frequency_table(self):
@@ -225,8 +225,8 @@ class Customer(Greenlet):
             ))
 
         if not bucket.name in self._keys_by_bucket:
-            self._keys_by_bucket[bucket.name] = list()
-        self._keys_by_bucket[bucket.name].append(key)
+            self._keys_by_bucket[bucket.name] = set()
+        self._keys_by_bucket[bucket.name].add(key)
 
         event_message["size"] = size
         event_message["end-time"] = time.time()
@@ -248,8 +248,8 @@ class Customer(Greenlet):
             return
         
         # pick a random key from a random bucket
-        key_list = random.choice(self._keys_by_bucket.values())
-        key = random.choice(key_list)
+        key_set = random.choice(self._keys_by_bucket.values())
+        key = random.choice(list(key_set))
 
         before_stats = key._bucket.get_space_used()
         event_message["bytes-retrieved-before"] = \
@@ -292,10 +292,10 @@ class Customer(Greenlet):
 
         # pop a random key from a random bucket
         bucket_name = random.choice(self._keys_by_bucket.keys())
-        key_list = self._keys_by_bucket[bucket_name]
-        key = random.choice(key_list)
-        key_list.remove(key)
-        if len(key_list) == 0:
+        key_set = self._keys_by_bucket[bucket_name]
+        key = random.choice(list(key_set))
+        key_set.remove(key)
+        if len(key_set) == 0:
             del self._keys_by_bucket[bucket_name]
 
         before_stats = key._bucket.get_space_used()
