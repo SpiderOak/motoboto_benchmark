@@ -14,12 +14,18 @@ import motoboto
 from motoboto.config import config_template
 from motoboto.s3.key import Key
 
+from lumberyard.http_connection import LumberyardRetryableHTTPError
 from lumberyard.http_util import compute_default_collection_name
 
 from mock_input_file import MockInputFile
 from mock_output_file import MockOutputFile
 from bucket_name_manager import BucketNameManager
 from key_name_manager import KeyNameManager
+
+class CustomerError(Exception):
+    pass
+
+_max_archive_retries = 3
 
 class Customer(Greenlet):
     """
@@ -120,7 +126,7 @@ class Customer(Greenlet):
         assert len(self._frequency_table) == 100
 
     def _delay(self):
-        """wait for a (delimted) random time"""
+        """wait for a (delimited) random time"""
         delay_size = random.uniform(
             self._test_spec["low-delay"], self._test_spec["high-delay"]
         )
@@ -210,7 +216,23 @@ class Customer(Greenlet):
         # got to send a string until I figure it out
 #        input_file = MockInputFile(size)
 #        key.set_contents_from_file(input_file)
-        key.set_contents_from_string("a" * size)
+
+        data = "a" * size
+        retry_count = 0
+        while True:
+
+            try:
+                key.set_contents_from_string(data)
+            except LumberyardRetryableHTTPError, instance:
+                if retry_count >= _max_archive_retries:
+                    raise
+                self._log.warn("%s: retry in %s seconds" % (
+                    instance, instance.retry_after,
+                ))
+                self._halt_event.wait(instance.retry_after)
+                retry_count += 1
+            else:
+                break
 
         after_stats = bucket.get_space_used()
         event_message["bytes-added-after"] = after_stats["bytes_added"]
