@@ -177,7 +177,6 @@ class Customer(Greenlet):
         if bucket.name in self._keys_by_bucket:
             for key in self._keys_by_bucket.pop(bucket.name):
                 key.delete()
-            del self._keys_by_bucket[bucket.name]
 
         self._s3_connection.delete_bucket(bucket.name)
         
