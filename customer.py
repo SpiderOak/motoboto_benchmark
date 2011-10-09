@@ -25,7 +25,8 @@ from key_name_manager import KeyNameManager
 class CustomerError(Exception):
     pass
 
-_max_archive_retries = 3
+_max_archive_retries = 10
+_max_delete_retries = 10
 
 class Customer(Greenlet):
     """
@@ -324,7 +325,22 @@ class Customer(Greenlet):
                 before_stats["bytes_removed"]
 
         self._log.info("deleting %r from %r" % (key.name, bucket_name, ))
-        key.delete()
+
+        retry_count = 0
+        while True:
+
+            try:
+                key.delete()
+            except LumberyardRetryableHTTPError, instance:
+                if retry_count >= _max_delete_retries:
+                    raise
+                self._log.warn("%s: retry in %s seconds" % (
+                    instance, instance.retry_after,
+                ))
+                self._halt_event.wait(instance.retry_after)
+                retry_count += 1
+            else:
+                break
 
         after_stats = key._bucket.get_space_used()
         event_message["bytes-removed-after"] = \
