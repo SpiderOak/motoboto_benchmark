@@ -14,10 +14,8 @@ import sys
 
 import gevent
 
-# 2011-09-19 dougfort -- gevent monkeypatched sockets don't use /etc/hosts
-# which I'm using to gimmick addresses for my local tests
-#from gevent import monkey 
-#monkey.patch_socket()
+from gevent.monkey import patch_all
+patch_all
 
 import zmq
 from gevent.queue import Queue
