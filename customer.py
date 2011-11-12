@@ -212,17 +212,14 @@ class Customer(Greenlet):
             key_name, bucket.name, size,
         ))
 
-        # I can't persuade HTTPRequest to use the mock file
-        # got to send a string until I figure it out
-#        input_file = MockInputFile(size)
-#        key.set_contents_from_file(input_file)
+        input_file = MockInputFile(size)
 
-        data = "a" * size
         retry_count = 0
+
         while True:
 
             try:
-                key.set_contents_from_string(data)
+                key.set_contents_from_file(input_file)
             except LumberyardRetryableHTTPError, instance:
                 if retry_count >= _max_archive_retries:
                     raise

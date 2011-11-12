@@ -27,3 +27,5 @@ class MockInputFile(object):
         self._bytes_read += size
         return 'a' * size
 
+    def __len__(self):
+        return self._total_size
