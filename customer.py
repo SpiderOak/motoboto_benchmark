@@ -11,7 +11,6 @@ import time
 from  gevent.greenlet import Greenlet
 
 import motoboto
-from motoboto.config import config_template
 from motoboto.s3.key import Key
 
 from lumberyard.http_connection import LumberyardRetryableHTTPError
@@ -32,15 +31,16 @@ class Customer(Greenlet):
     """
     A greenlet object to represent a single nimbus.io customer
     """
-    def __init__(self, halt_event, test_spec, pub_queue):
+    def __init__(self, halt_event, user_config, test_script, pub_queue):
         Greenlet.__init__(self)
-        self._log = logging.getLogger(test_spec["username"])
+        self._log = logging.getLogger(user_config.user_name)
         self._halt_event = halt_event
-        self._test_spec = test_spec
+        self._user_config = user_config
+        self._test_script = test_script
         self._pub_queue = pub_queue
 
         self._default_collection_name = compute_default_collection_name(
-            test_spec["username"]
+            self._user_config.user_name
         )
         self._s3_connection = None
 
@@ -57,8 +57,8 @@ class Customer(Greenlet):
         self._frequency_table = list()
 
         self._bucket_name_manager = BucketNameManager(
-            test_spec["username"],
-            test_spec["max-bucket-count"],
+            self._user_config.user_name,
+            test_script["max-bucket-count"],
         ) 
 
         self._key_name_manager = KeyNameManager() 
@@ -74,12 +74,7 @@ class Customer(Greenlet):
 
     def _run(self):
         # the JSON data comes in as unicode. This does bad things to the key
-        config = config_template(
-            user_name=self._test_spec["username"], 
-            auth_key_id=self._test_spec["auth-key-id"], 
-            auth_key=str(self._test_spec["auth-key"])
-        )
-        self._s3_connection = motoboto.connect_s3(config=config)
+        self._s3_connection = motoboto.connect_s3(config=self._user_config)
 
         self._initial_inventory()
         self._load_frequency_table()
@@ -120,8 +115,8 @@ class Customer(Greenlet):
         of the corresponding function object. We will choose a random number 
         between 0 and 99, to select a test action        
         """
-        for key in self._test_spec["distribution"].keys():
-            count = self._test_spec["distribution"][key]
+        for key in self._test_script["distribution"].keys():
+            count = self._test_script["distribution"][key]
             for _ in xrange(count):
                 self._frequency_table.append(self._dispatch_table[key])
         assert len(self._frequency_table) == 100
@@ -129,7 +124,7 @@ class Customer(Greenlet):
     def _delay(self):
         """wait for a (delimited) random time"""
         delay_size = random.uniform(
-            self._test_spec["low-delay"], self._test_spec["high-delay"]
+            self._test_script["low-delay"], self._test_script["high-delay"]
         )
         self._halt_event.wait(delay_size)
 
@@ -139,7 +134,7 @@ class Customer(Greenlet):
             "start-time"    : time.time(),
             "end-time"      : None,
         }
-        if len(self._buckets) >= self._test_spec["max-bucket-count"]:
+        if len(self._buckets) >= self._test_script["max-bucket-count"]:
             self._log.info("ignore _create_bucket: already have %s buckets" % (
                 len(self._buckets),
             ))
@@ -205,8 +200,8 @@ class Customer(Greenlet):
         key_name = self._key_name_generator.next()
         key.name = key_name
         size = random.randint(
-            self._test_spec["min-file-size"],
-            self._test_spec["max-file-size"]
+            self._test_script["min-file-size"],
+            self._test_script["max-file-size"]
         )
         self._log.info("archiving %r into %r %s" % (
             key_name, bucket.name, size,
