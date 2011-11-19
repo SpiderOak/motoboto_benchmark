@@ -31,16 +31,16 @@ class Customer(Greenlet):
     """
     A greenlet object to represent a single nimbus.io customer
     """
-    def __init__(self, halt_event, user_config, test_script, pub_queue):
+    def __init__(self, halt_event, user_identity, test_script, pub_queue):
         Greenlet.__init__(self)
-        self._log = logging.getLogger(user_config.user_name)
+        self._log = logging.getLogger(user_identity.user_name)
         self._halt_event = halt_event
-        self._user_config = user_config
+        self._user_identity = user_identity
         self._test_script = test_script
         self._pub_queue = pub_queue
 
         self._default_collection_name = compute_default_collection_name(
-            self._user_config.user_name
+            self._user_identity.user_name
         )
         self._s3_connection = None
 
@@ -57,7 +57,7 @@ class Customer(Greenlet):
         self._frequency_table = list()
 
         self._bucket_name_manager = BucketNameManager(
-            self._user_config.user_name,
+            self._user_identity.user_name,
             test_script["max-bucket-count"],
         ) 
 
@@ -74,7 +74,7 @@ class Customer(Greenlet):
 
     def _run(self):
         # the JSON data comes in as unicode. This does bad things to the key
-        self._s3_connection = motoboto.connect_s3(config=self._user_config)
+        self._s3_connection = motoboto.connect_s3(identity=self._user_identity)
 
         self._initial_inventory()
         self._load_frequency_table()

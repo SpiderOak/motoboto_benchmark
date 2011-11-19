@@ -21,7 +21,7 @@ import zmq
 from gevent.queue import Queue
 from gevent.event import Event
 
-from motoboto.config import load_config_from_file
+from motoboto.identity import load_identity_from_file
 
 from publisher import Publisher
 from customer import Customer
@@ -59,8 +59,8 @@ def _parse_command_line():
         help="full path of the log file"
     )
     parser.add_option(
-        '-c', "--user-config-dir", dest="user_config_dir", type="string",
-        help="path to a directory containing user config files"
+        '-c', "--user-identity-dir", dest="user_identity_dir", type="string",
+        help="path to a directory containing user identity files"
     )
     parser.add_option(
         '-s', "--test-script", dest="test_script", type="string",
@@ -76,8 +76,8 @@ def _parse_command_line():
 
     options, _ = parser.parse_args()
 
-    if options.user_config_dir is None:
-        print >> sys.stderr, "You must enter a user config dir"
+    if options.user_identity_dir is None:
+        print >> sys.stderr, "You must enter a user identity dir"
         sys.exit(1)
 
     if options.test_script is None:
@@ -129,14 +129,16 @@ def main():
     with open(options.test_script, "rt") as input_file:
         test_script = json.load(input_file)
 
-    log.info("loading user config files from %r" % (options.user_config_dir, ))
+    log.info("loading user identity files from %r" % (
+        options.user_identity_dir, 
+    ))
     customer_list = list()
-    for file_name in os.listdir(options.user_config_dir):
+    for file_name in os.listdir(options.user_identity_dir):
         log.info("loading %r" % (file_name, ))
-        user_config = load_config_from_file(
-            os.path.join(options.user_config_dir, file_name)
+        user_identity = load_identity_from_file(
+            os.path.join(options.user_identity_dir, file_name)
         )
-        customer = Customer(halt_event, user_config, test_script, pub_queue)
+        customer = Customer(halt_event, user_identity, test_script, pub_queue)
         customer.start()
         customer_list.append(customer)
 
