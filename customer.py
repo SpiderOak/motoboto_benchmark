@@ -304,8 +304,14 @@ class Customer(Greenlet):
             "bytes-removed-after"   : None,
         }
 
+        # if we don't have any keys yet, we have to skip this
+        if len(self._keys_by_bucket) == 0:
+            self._log.warn("skipping _delete_key, no keys yet")
+            return
+        
         # pop a random key from a random bucket
         bucket_name = random.choice(self._keys_by_bucket.keys())
+
         key_set = self._keys_by_bucket[bucket_name]
         key = random.choice(list(key_set))
         key_set.remove(key)
