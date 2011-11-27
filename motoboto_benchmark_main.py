@@ -59,8 +59,12 @@ def _parse_command_line():
         help="full path of the log file"
     )
     parser.add_option(
-        '-c', "--user-identity-dir", dest="user_identity_dir", type="string",
+        '-u', "--user-identity-dir", dest="user_identity_dir", type="string",
         help="path to a directory containing user identity files"
+    )
+    parser.add_option(
+        '-m', "--max-users", dest="max_users", type="int",
+        help="maximum number of users, None == use all"
     )
     parser.add_option(
         '-s', "--test-script", dest="test_script", type="string",
@@ -134,6 +138,11 @@ def main():
     ))
     customer_list = list()
     for file_name in os.listdir(options.user_identity_dir):
+        if options.max_users is not None \
+        and len(customer_list) >= options.max_users:
+            log.info("breaking at %s users" % (options.max_users, ))
+            break
+
         log.info("loading %r" % (file_name, ))
         user_identity = load_identity_from_file(
             os.path.join(options.user_identity_dir, file_name)
