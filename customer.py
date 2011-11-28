@@ -68,8 +68,7 @@ class Customer(Greenlet):
         """
         close the _pull socket
         """
-        if self._s3_connection is not None:
-            self._s3_connection.close()
+        self._log.info("joining")
         Greenlet.join(self, timeout)
 
     def _run(self):
@@ -89,6 +88,8 @@ class Customer(Greenlet):
             test_function = self._frequency_table[random.randint(0, 99)]
             test_function()
             self._delay()
+
+        self._s3_connection.close()
 
     def _initial_inventory(self):
         """get an initial inventory of buckets and files"""

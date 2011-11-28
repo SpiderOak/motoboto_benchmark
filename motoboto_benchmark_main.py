@@ -158,11 +158,6 @@ def main():
         log.info("KeyBoardInterrupt")
         halt_event.set()
     
-    log.info("killing greenlets")
-    publisher.kill()
-    for customer in customer_list:
-        customer.kill()
-    
     log.info("joining")
     publisher.join()
     for customer in customer_list:
