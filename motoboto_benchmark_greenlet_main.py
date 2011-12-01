@@ -21,21 +21,24 @@ from gevent.event import Event
 
 from motoboto.identity import load_identity_from_file
 
-from common import handle_sigterm, parse_command_line, initialize_logging
+from common import parse_command_line, initialize_logging
 
 from greenlet_customer import GreenletCustomer
+
+def _handle_sigterm(halt_event):
+    halt_event.set()
 
 def main():
     """
     main processing module
     """
     options = parse_command_line()
-    initialize_logging(options.log_path)
+    initialize_logging(options.log_name)
     log = logging.getLogger("main")
     log.info("program starts")
 
     halt_event = Event()
-    gevent.signal(signal.SIGTERM, handle_sigterm, halt_event)
+    gevent.signal(signal.SIGTERM, _handle_sigterm, halt_event)
 
     log.info("loading test script from %r" % (options.test_script, ))
     with open(options.test_script, "rt") as input_file:
@@ -64,7 +67,9 @@ def main():
         halt_event.wait(options.test_duration)
     except KeyboardInterrupt:
         log.info("KeyBoardInterrupt")
-        halt_event.set()
+
+    log.info("setting halt event")
+    halt_event.set()
     
     log.info("joining")
     for customer in customer_list:

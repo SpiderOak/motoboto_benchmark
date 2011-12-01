@@ -3,14 +3,14 @@
 common routines
 """
 import logging
+import os
+import os.path
 import sys
 
-_log_path = "motoboto_benchmark.log"
+_log_dir = os.environ["NIMBUSIO_LOG_DIR"]
+_log_name = "motoboto_benchmark.log"
 _log_format_template = u'%(asctime)s %(levelname)-8s %(name)-20s: %(message)s'
 _default_test_duration = 60 * 60
-
-def handle_sigterm(halt_event):
-    halt_event.set()
 
 def parse_command_line():
     """Parse the command line, returning an options object"""
@@ -18,8 +18,8 @@ def parse_command_line():
 
     parser = OptionParser()
     parser.add_option(
-        '-l', "--log-path", dest="log_path", type="string",
-        help="full path of the log file"
+        '-l', "--log-name", dest="log_name", type="string",
+        help="name of the log file"
     )
     parser.add_option(
         '-u', "--user-identity-dir", dest="user_identity_dir", type="string",
@@ -38,7 +38,7 @@ def parse_command_line():
         help="Number of seconds for the test ro run"
     )
 
-    parser.set_defaults(log_path=_log_path)
+    parser.set_defaults(log_name=_log_name)
     parser.set_defaults(test_duration=_default_test_duration)
 
     options, _ = parser.parse_args()
@@ -53,8 +53,9 @@ def parse_command_line():
 
     return options
 
-def initialize_logging(log_path):
+def initialize_logging(log_name):
     """initialize the log"""
+    log_path = os.path.join(_log_dir, log_name)
     handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
     formatter = logging.Formatter(_log_format_template)
     handler.setFormatter(formatter)
