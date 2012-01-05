@@ -60,6 +60,9 @@ def main():
             "NIMBUS_IO_SERVICE_PORT"    : os.environ["NIMBUS_IO_SERVICE_PORT"], 
             "NIMBUS_IO_SERVICE_DOMAIN"  : \
                 os.environ["NIMBUS_IO_SERVICE_DOMAIN"], 
+            "NIMBUS_IO_SERVICE_SSL"     : os.environ.get(
+                "NIMBUS_IO_SERVICE_SSL", "0"
+            )
         }        
 
         process = subprocess.Popen(args, env=environment)
