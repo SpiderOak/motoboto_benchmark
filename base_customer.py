@@ -43,11 +43,13 @@ class BaseCustomer(object):
         self._keys_by_bucket = dict()
 
         self._dispatch_table = {
-            "create-bucket" : self._create_bucket,
-            "delete-bucket" : self._delete_bucket,
-            "archive"       : self._archive,
-            "retrieve"      : self._retrieve,
-            "delete-key"    : self._delete_key,
+            "create-bucket"     : self._create_bucket,
+            "delete-bucket"     : self._delete_bucket,
+            "archive-new"       : self._archive_new,
+            "archive-replace"   : self._archive_replace,
+            "archive-version"   : self._archive_version,
+            "retrieve"          : self._retrieve,
+            "delete-key"        : self._delete_key,
         }
         self._frequency_table = list()
 
@@ -151,16 +153,34 @@ class BaseCustomer(object):
                 key.delete()
 
         self._s3_connection.delete_bucket(bucket.name)
-        
-    def _archive(self):
-        # pick a bucket
-        bucket = random.choice(self._buckets.values())
 
-        # get its current stats
+    def _archive_new(self):
+        bucket = random.choice(self._buckets.values())
+        key_name = self._key_name_generator.next()
+        self._archive(bucket, key_name)
+        
+    def _archive_replace(self):
+        bucket = random.choice(self._buckets.values())
+        if not bucket.name in self._keys_by_bucket:
+            self._log.warn("No keys for bucket, skipping _archive_replace")
+            return
+
+        key = random.choice(list(self._keys_by_bucket[bucket.name]))
+        self._archive(bucket, key.name, replace=True)
+        
+    def _archive_version(self):
+        bucket = random.choice(self._buckets.values())
+        if not bucket.name in self._keys_by_bucket:
+            self._log.warn("No keys for bucket, skipping _archive_replace")
+            return
+
+        key = random.choice(list(self._keys_by_bucket[bucket.name]))
+        self._archive(bucket, key.name, replace=False)
+        
+    def _archive(self, bucket, key_name, replace=True):
         before_stats = bucket.get_space_used() 
 
         key = Key(bucket)
-        key_name = self._key_name_generator.next()
         key.name = key_name
         size = random.randint(
             self._test_script["min-file-size"],
@@ -177,7 +197,7 @@ class BaseCustomer(object):
         while True:
 
             try:
-                key.set_contents_from_file(input_file)
+                key.set_contents_from_file(input_file, replace=replace)
             except LumberyardRetryableHTTPError, instance:
                 if retry_count >= _max_archive_retries:
                     raise
