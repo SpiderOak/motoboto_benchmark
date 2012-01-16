@@ -10,7 +10,8 @@ import random
 import motoboto
 from motoboto.s3.key import Key
 
-from lumberyard.http_connection import LumberyardRetryableHTTPError
+from lumberyard.http_connection import LumberyardHTTPError, \
+        LumberyardRetryableHTTPError
 from lumberyard.http_util import compute_default_collection_name
 
 from mock_input_file import MockInputFile
@@ -242,7 +243,15 @@ class BaseCustomer(object):
 
         output_file = MockOutputFile()
 
-        key.get_contents_to_file(output_file)
+        try:
+            key.get_contents_to_file(output_file)
+        except LumberyardHTTPError, instance:
+            if instance.status == 404:
+                self._log.error("%r not found in %r" % (
+                    key.name, key._bucket.name, 
+                ))
+                return
+            raise
 
         after_stats = key._bucket.get_space_used()
 
