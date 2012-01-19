@@ -76,7 +76,10 @@ class BaseCustomer(object):
         while not self._halt_event.is_set():
             # run a randomly selected test function
             test_function = self._frequency_table[random.randint(0, 99)]
-            test_function()
+            try:
+                test_function()
+            except Exception:
+                self._log.exception("test_function")
             self._delay()
 
         self._s3_connection.close()
@@ -117,7 +120,7 @@ class BaseCustomer(object):
         delay_size = random.uniform(
             self._test_script["low-delay"], self._test_script["high-delay"]
         )
-        self._halt_event.wait(delay_size)
+        self._halt_event.wait(timeout=delay_size)
 
     def _create_bucket(self):
         if len(self._buckets) >= self._test_script["max-bucket-count"]:
@@ -151,7 +154,25 @@ class BaseCustomer(object):
         # delete all the keys for the bucket
         if bucket.name in self._keys_by_bucket:
             for key in self._keys_by_bucket.pop(bucket.name):
-                key.delete()
+                retry_count = 0
+                while not self._halt_event.is_set():
+
+                    try:
+                        key.delete()
+                    except LumberyardRetryableHTTPError, instance:
+                        if retry_count >= _max_delete_retries:
+                            raise
+                        self._log.warn("%s: retry in %s seconds" % (
+                            instance, instance.retry_after,
+                        ))
+                        self._halt_event.wait(timeout=instance.retry_after)
+                        retry_count += 1
+                    else:
+                        break
+
+                if self._halt_event.is_set():
+                    self._log.info("halt_event set")
+                    return
 
         self._s3_connection.delete_bucket(bucket.name)
 
@@ -195,7 +216,7 @@ class BaseCustomer(object):
 
         retry_count = 0
 
-        while True:
+        while not self._halt_event.is_set():
 
             try:
                 key.set_contents_from_file(input_file, replace=replace)
@@ -205,10 +226,14 @@ class BaseCustomer(object):
                 self._log.warn("%s: retry in %s seconds" % (
                     instance, instance.retry_after,
                 ))
-                self._halt_event.wait(instance.retry_after)
+                self._halt_event.wait(timeout=instance.retry_after)
                 retry_count += 1
             else:
                 break
+
+        if self._halt_event.is_set():
+            self._log.info("halt_event set")
+            return
 
         after_stats = bucket.get_space_used()
 
@@ -285,7 +310,7 @@ class BaseCustomer(object):
         self._log.info("deleting %r from %r" % (key.name, bucket_name, ))
 
         retry_count = 0
-        while True:
+        while not self._halt_event.is_set():
 
             try:
                 key.delete()
@@ -295,10 +320,14 @@ class BaseCustomer(object):
                 self._log.warn("%s: retry in %s seconds" % (
                     instance, instance.retry_after,
                 ))
-                self._halt_event.wait(instance.retry_after)
+                self._halt_event.wait(timeout=instance.retry_after)
                 retry_count += 1
             else:
                 break
+
+        if self._halt_event.is_set():
+            self._log.info("halt_event set")
+            return
 
         after_stats = key._bucket.get_space_used()
 
