@@ -167,6 +167,7 @@ class BaseCustomer(object):
                         ))
                         self._halt_event.wait(timeout=instance.retry_after)
                         retry_count += 1
+                        self._log.warn("retry #%s" % (retry_count, ))
                     else:
                         break
 
@@ -212,11 +213,11 @@ class BaseCustomer(object):
             key_name, bucket.name, size,
         ))
 
-        input_file = MockInputFile(size)
-
         retry_count = 0
 
         while not self._halt_event.is_set():
+
+            input_file = MockInputFile(size)
 
             try:
                 key.set_contents_from_file(input_file, replace=replace)
@@ -228,6 +229,7 @@ class BaseCustomer(object):
                 ))
                 self._halt_event.wait(timeout=instance.retry_after)
                 retry_count += 1
+                self._log.warn("retry #%s" % (retry_count, ))
             else:
                 break
 
@@ -322,6 +324,7 @@ class BaseCustomer(object):
                 ))
                 self._halt_event.wait(timeout=instance.retry_after)
                 retry_count += 1
+                self._log.warn("retry #%s" % (retry_count, ))
             else:
                 break
 
