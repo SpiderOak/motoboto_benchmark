@@ -41,16 +41,20 @@ class BaseCustomer(object):
         self._s3_connection = None
 
         self._buckets = dict()
-        self._keys_by_bucket = dict()
+        self._versioned_bucket_names = list()
+        self._unversioned_bucket_names = list()
 
         self._dispatch_table = {
-            "create-bucket"     : self._create_bucket,
-            "delete-bucket"     : self._delete_bucket,
-            "archive-new"       : self._archive_new,
-            "archive-replace"   : self._archive_replace,
-            "archive-version"   : self._archive_version,
-            "retrieve"          : self._retrieve,
-            "delete-key"        : self._delete_key,
+            "create-bucket"           : self._create_bucket,
+            "create-versioned-bucket" : self._create_versioned_bucket,
+            "delete-bucket"           : self._delete_bucket,
+            "archive-new-key"         : self._archive_new_key,
+            "archive-new-version"     : self._archive_new_version,
+            "archive-overwrite"       : self._archive_overwrite,
+            "retrieve-latest"         : self._retrieve_latest,
+            "retrieve-version"        : self._retrieve_version,
+            "delete-key"              : self._delete_key,
+            "delete-version"          : self._delete_version,
         }
         self._frequency_table = list()
 
@@ -98,9 +102,6 @@ class BaseCustomer(object):
                 self._log.info("_initial_inventory found key %r, %r" % (
                     key.name, bucket.name,
                 ))
-                if not bucket.name in self._keys_by_bucket:
-                    self._keys_by_bucket[bucket.name] = set()
-                self._keys_by_bucket[bucket.name].add(key)
                 self._key_name_manager.existing_key_name(key.name)
 
     def _load_frequency_table(self):
@@ -122,12 +123,13 @@ class BaseCustomer(object):
         )
         self._halt_event.wait(timeout=delay_size)
 
-    def _create_bucket(self):
+    def _create_unversioned_bucket(self):
         if len(self._buckets) >= self._test_script["max-bucket-count"]:
             self._log.info("ignore _create_bucket: already have %s buckets" % (
                 len(self._buckets),
             ))
-            return
+            return None
+
         bucket_name = self._bucket_name_manager.next()
         if bucket_name is None:
             self._log.info("ignore _create_bucket")
@@ -135,6 +137,23 @@ class BaseCustomer(object):
         self._log.info("create bucket %r" % (bucket_name, ))
         new_bucket = self._s3_connection.create_bucket(bucket_name)
         self._buckets[new_bucket.name] = new_bucket  
+
+        return new_bucket
+
+    def _create_bucket(self):
+        bucket = self._create_unversioned_bucket()
+        if bucket is None:
+            return
+
+        self._unversioned_bucket_names.append(bucket.name)
+
+    def _create_versioned_bucket(self):
+        bucket = self._create_unversioned_bucket()
+        if bucket is None:
+            return
+
+        bucket.configure_versioning(True)
+        self._versioned_bucket_names.append(bucket.name)
 
     def _delete_bucket(self):
         eligible_bucket_names = [
@@ -148,61 +167,98 @@ class BaseCustomer(object):
         bucket_name = random.choice(eligible_bucket_names)
         self._log.info("delete bucket %r" % (bucket_name, ))
         bucket = self._buckets.pop(bucket_name)
-
+        try:
+            i = self._unversioned_bucket_names.index(bucket_name)
+        except ValueError:
+            pass
+        else:
+            del self._unversioned_bucket_names[i]
+        try:
+            i = self._versioned_bucket_names.index(bucket_name)
+        except ValueError:
+            pass
+        else:
+            del self._versioned_bucket_names[i]
         self._bucket_name_manager.deleted_bucket_name(bucket_name)
 
         # delete all the keys for the bucket
-        if bucket.name in self._keys_by_bucket:
-            for key in self._keys_by_bucket.pop(bucket.name):
-                retry_count = 0
-                while not self._halt_event.is_set():
+        for key in bucket.get_all_keys():
+            retry_count = 0
+            while not self._halt_event.is_set():
 
-                    try:
-                        key.delete()
-                    except LumberyardRetryableHTTPError, instance:
-                        if retry_count >= _max_delete_retries:
-                            raise
-                        self._log.warn("%s: retry in %s seconds" % (
-                            instance, instance.retry_after,
-                        ))
-                        self._halt_event.wait(timeout=instance.retry_after)
-                        retry_count += 1
-                        self._log.warn("retry #%s" % (retry_count, ))
-                    else:
-                        break
+                try:
+                    key.delete()
+                except LumberyardRetryableHTTPError, instance:
+                    if retry_count >= _max_delete_retries:
+                        raise
+                    self._log.warn("%s: retry in %s seconds" % (
+                        instance, instance.retry_after,
+                    ))
+                    self._halt_event.wait(timeout=instance.retry_after)
+                    retry_count += 1
+                    self._log.warn("retry #%s" % (retry_count, ))
+                else:
+                    break
 
-                if self._halt_event.is_set():
-                    self._log.info("halt_event set")
-                    return
+            if self._halt_event.is_set():
+                self._log.info("halt_event set")
+                return
 
         self._s3_connection.delete_bucket(bucket.name)
 
-    def _archive_new(self):
+    def _archive_new_key(self):
+        """
+        add a new key to a bucket
+        """
+        # we assume the user has at least one bucket, the default
         bucket = random.choice(self._buckets.values())
         key_name = self._key_name_generator.next()
         self._archive(bucket, key_name)
         
-    def _archive_replace(self):
-        bucket = random.choice(self._buckets.values())
-        if not bucket.name in self._keys_by_bucket:
-            self._log.warn("No keys for bucket, skipping _archive_replace")
+    def _archive_new_version(self):
+        """
+        add a new version of an existing key to a bucket
+        """
+        if len(self._versioned_bucket_names) == 0:
+            self._log.warn(
+                "_archive_new_version ignored: no versioned buckets"
+            )
             return
+        bucket_name = random.choice(self._versioned_bucket_names)
+        bucket = self._buckets[bucket_name]
 
-        key = random.choice(list(self._keys_by_bucket[bucket.name]))
-        self._archive(bucket, key.name, replace=True)
+        # if this bucket doesn't have any keys yet, go ahead and add
+        # a new one. Otherwise, add a new version of an existing key
+        keys = bucket.get_all_keys()
+        if len(keys) == 0:
+            key_name = self._key_name_generator.next()
+        else:
+            key = random.choice(keys)
+            key_name = key.name
+
+        self._archive(bucket, key_name)
         
-    def _archive_version(self):
-        bucket = random.choice(self._buckets.values())
-        if not bucket.name in self._keys_by_bucket:
-            self._log.warn("No keys for bucket, skipping _archive_replace")
+    def _archive_overwrite(self):
+        if len(self._unversioned_bucket_names) == 0:
+            self._log.warn(
+                "_archive_overwrite ignored: no unversioned buckets"
+            )
             return
+        bucket_name = random.choice(self._unversioned_bucket_names)
+        bucket = self._buckets[bucket_name]
 
-        key = random.choice(list(self._keys_by_bucket[bucket.name]))
-        self._archive(bucket, key.name, replace=False)
+        # if this bucket doesn't have any keys yet, go ahead and add
+        # a new one. Otherwise, write over an existing key
+        keys = bucket.get_all_keys()
+        if len(keys) == 0:
+            key_name = self._key_name_generator.next()
+        else:
+            key = random.choice(keys)
+            key_name = key.name
+
+        self._archive(bucket, key_name)
         
     def _archive(self, bucket, key_name, replace=True):
-        before_stats = bucket.get_space_used() 
-
         key = Key(bucket)
         key.name = key_name
         size = random.randint(
@@ -233,36 +289,14 @@ class BaseCustomer(object):
             else:
                 break
 
-        if self._halt_event.is_set():
-            self._log.info("halt_event set")
-            return
-
-        after_stats = bucket.get_space_used()
-
-        if after_stats["bytes_added"] != before_stats["bytes_added"] + size:
-            self._log.error("%s:%r bytes_added: %s != %s + %s" % (
-                key.name, 
-                bucket.name, 
-                after_stats["bytes_added"],
-                before_stats["bytes_added"],
-                size, 
-            ))
-
-        if not bucket.name in self._keys_by_bucket:
-            self._keys_by_bucket[bucket.name] = set()
-        self._keys_by_bucket[bucket.name].add(key)
-
-    def _retrieve(self):
-        # if we don't have any keys yet, we have to skip this
-        if len(self._keys_by_bucket) == 0:
-            self._log.warn("skipping _retrieve, no keys yet")
-            return
-        
+    def _retrieve_latest(self):
         # pick a random key from a random bucket
-        key_set = random.choice(self._keys_by_bucket.values())
-        key = random.choice(list(key_set))
-
-        before_stats = key._bucket.get_space_used()
+        bucket = random.choice(self._buckets.values())
+        keys = bucket.get_all_keys()
+        if len(keys) == 0:
+            self._log.warn("skipping _retrieve_latest, no keys yet")
+            return
+        key = random.choice(keys)
 
         self._log.info("retrieving %r from %r" % (
             key.name, key._bucket.name, 
@@ -280,36 +314,41 @@ class BaseCustomer(object):
                 return
             raise
 
-        after_stats = key._bucket.get_space_used()
+    def _retrieve_version(self):
+        # pick a random key from the versions of a random bucket
+        bucket = random.choice(self._buckets.values())
+        keys = bucket.get_all_versions()
+        if len(keys) == 0:
+            self._log.warn("skipping _retrieve_version, no keys yet")
+            return
+        key = random.choice(keys)
 
-        if after_stats["bytes_retrieved"] != \
-           before_stats["bytes_retrieved"] + output_file.bytes_written:
-            self._log.error("%s:%r bytes_retrieved: %s != %s + %s" % (
-                key.name, 
-                key._bucket.name, 
-                after_stats["bytes_retrieved"],
-                before_stats["bytes_retrieved"],
-                output_file.bytes_written, 
-            ))
+        self._log.info("retrieving %r %r from %r" % (
+            key.name, key.version_id, key._bucket.name, 
+        ))
+
+        output_file = MockOutputFile()
+
+        try:
+            key.get_contents_to_file(output_file, version_id=key.version_id)
+        except LumberyardHTTPError, instance:
+            if instance.status == 404:
+                self._log.error("%r not found in %r" % (
+                    key.name, key._bucket.name, 
+                ))
+                return
+            raise
 
     def _delete_key(self):
-        # if we don't have any keys yet, we have to skip this
-        if len(self._keys_by_bucket) == 0:
+        # pick a random key from a random bucket
+        bucket = random.choice(self._buckets.values())
+        keys = bucket.get_all_keys()
+        if len(keys) == 0:
             self._log.warn("skipping _delete_key, no keys yet")
             return
-        
-        # pop a random key from a random bucket
-        bucket_name = random.choice(self._keys_by_bucket.keys())
+        key = random.choice(keys)
 
-        key_set = self._keys_by_bucket[bucket_name]
-        key = random.choice(list(key_set))
-        key_set.remove(key)
-        if len(key_set) == 0:
-            del self._keys_by_bucket[bucket_name]
-
-        before_stats = key._bucket.get_space_used()
-
-        self._log.info("deleting %r from %r" % (key.name, bucket_name, ))
+        self._log.info("deleting %r from %r" % (key.name, bucket.name, ))
 
         retry_count = 0
         while not self._halt_event.is_set():
@@ -328,17 +367,33 @@ class BaseCustomer(object):
             else:
                 break
 
-        if self._halt_event.is_set():
-            self._log.info("halt_event set")
+    def _delete_version(self):
+        # pick a random key from the versions of a random bucket
+        bucket = random.choice(self._buckets.values())
+        keys = bucket.get_all_versions()
+        if len(keys) == 0:
+            self._log.warn("skipping _retrieve_version, no keys yet")
             return
+        key = random.choice(keys)
 
-        after_stats = key._bucket.get_space_used()
-
-        # TODO: get key size so we can verify this
-        self._log.info("%s:%r bytes_removed: %s %s" % (
-            key.name, 
-            key._bucket.name, 
-            after_stats["bytes_removed"],
-            before_stats["bytes_removed"],
+        self._log.info("deleting %r version %s from %r" % (
+            key.name, key.version_id, bucket.name, 
         ))
+
+        retry_count = 0
+        while not self._halt_event.is_set():
+
+            try:
+                key.delete(version_id=key.version_id)
+            except LumberyardRetryableHTTPError, instance:
+                if retry_count >= _max_delete_retries:
+                    raise
+                self._log.warn("%s: retry in %s seconds" % (
+                    instance, instance.retry_after,
+                ))
+                self._halt_event.wait(timeout=instance.retry_after)
+                retry_count += 1
+                self._log.warn("retry #%s" % (retry_count, ))
+            else:
+                break
 
