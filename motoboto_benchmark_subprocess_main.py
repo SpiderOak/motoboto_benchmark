@@ -33,7 +33,7 @@ def main():
 
     log.info("using test script %r" % (options.test_script, ))
 
-    program_dir = os.path.expandvars("${HOME}/motoboto_benchmark")
+    program_dir = os.path.dirname(__file__)
     program_path = os.path.join(program_dir, "customer_process.py")
 
     customer_process_list = list()
