@@ -70,6 +70,8 @@ class BaseCustomer(object):
         self._s3_connection = motoboto.connect_s3(identity=self._user_identity)
 
         self._initial_inventory()
+        if self._test_script.get("verify-before", False):
+            self._verify_retrieves()
         self._load_frequency_table()
 
         self._key_name_generator = self._key_name_manager.key_name_generator()
@@ -85,6 +87,9 @@ class BaseCustomer(object):
             except Exception:
                 self._log.exception("test_function")
             self._delay()
+
+        if self._test_script.get("verify-after", False):
+            self._verify_retrieves()
 
         self._s3_connection.close()
 
@@ -103,6 +108,22 @@ class BaseCustomer(object):
                     key.name, bucket.name,
                 ))
                 self._key_name_manager.existing_key_name(key.name)
+
+    def _verify_retrieves(self):
+        """
+        retrieve all known keys to verify that they are reachable
+        """
+        self._log.info("verifying retrieves")
+        buckets = self._s3_connection.get_all_buckets()
+        for bucket in buckets:
+            if bucket.versioning:
+                for key in bucket.get_all_versions():
+                    result = key.get_contents_as_string(
+                        version_id=key.version_id
+                    )
+            else:
+                for key in bucket.get_all_keys():
+                    result = key.get_contents_as_string()
 
     def _load_frequency_table(self):
         """
