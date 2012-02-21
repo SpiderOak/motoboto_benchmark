@@ -4,6 +4,7 @@ base_customer.py
 
 Base class representing a single nimbus.io customer
 """
+import hashlib
 import logging
 import random
 
@@ -20,6 +21,8 @@ from bucket_name_manager import BucketNameManager
 from key_name_manager import KeyNameManager
 
 class CustomerError(Exception):
+    pass
+class VerificationError(CustomerError):
     pass
 
 _max_archive_retries = 10
@@ -66,12 +69,14 @@ class BaseCustomer(object):
         self._key_name_manager = KeyNameManager() 
         self._key_name_generator = None
 
+        self._key_md5_digests = dict()
+
     def _main_loop(self):
         self._s3_connection = motoboto.connect_s3(identity=self._user_identity)
 
         self._initial_inventory()
         if self._test_script.get("verify-before", False):
-            self._verify_retrieves()
+            self._verify_before()
         self._load_frequency_table()
 
         self._key_name_generator = self._key_name_manager.key_name_generator()
@@ -89,7 +94,7 @@ class BaseCustomer(object):
             self._delay()
 
         if self._test_script.get("verify-after", False):
-            self._verify_retrieves()
+            self._verify_after()
 
         self._s3_connection.close()
 
@@ -109,11 +114,12 @@ class BaseCustomer(object):
                 ))
                 self._key_name_manager.existing_key_name(key.name)
 
-    def _verify_retrieves(self):
+    def _verify_before(self):
         """
         retrieve all known keys to verify that they are reachable
+        store md5 digests 
         """
-        self._log.info("verifying retrieves")
+        self._log.info("verifying retrieves before")
         buckets = self._s3_connection.get_all_buckets()
         for bucket in buckets:
             if bucket.versioning:
@@ -121,9 +127,52 @@ class BaseCustomer(object):
                     result = key.get_contents_as_string(
                         version_id=key.version_id
                     )
+                    md5_sum = hashlib.md5(result)
+                    self._key_md5_digests[
+                        (bucket.name, key.name, key.version_id, )
+                    ] = md5_sum.digest()
             else:
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
+                    md5_sum = hashlib.md5(result)
+                    self._key_md5_digests[
+                        (bucket.name, key.name, key.version_id, )
+                    ] = md5_sum.digest()
+
+    def _verify_after(self):
+        """
+        retrieve all known keys to verify that they are reachable
+        check md5 digests if they exist
+        """
+        self._log.info("verifying retrieves before")
+        buckets = self._s3_connection.get_all_buckets()
+        for bucket in buckets:
+            if bucket.versioning:
+                for key in bucket.get_all_versions():
+                    result = key.get_contents_as_string(
+                        version_id=key.version_id
+                    )
+                    md5_sum = hashlib.md5(result)
+                    expected_md5_digest_key = \
+                            (bucket.name, key.name, key.version_id, )
+                    expected_md5_digest = \
+                            self._key_md5_digests[expected_md5_digest_key]
+                    if md5_sum.digest() != expected_md5_digest:
+                        raise VerificationError(
+                            "verification failed {0}".format(
+                                expected_md5_digest_key))
+            else:
+                for key in bucket.get_all_keys():
+                    result = key.get_contents_as_string()
+                    md5_sum = hashlib.md5(result)
+                    expected_md5_digest_key = \
+                            (bucket.name, key.name, key.version_id, )
+                    expected_md5_digest = \
+                            self._key_md5_digests[expected_md5_digest_key]
+                    if md5_sum.digest() != expected_md5_digest:
+                        raise VerificationError(
+                            "verification failed {0}".format(
+                                expected_md5_digest_key))
 
     def _load_frequency_table(self):
         """
@@ -310,6 +359,9 @@ class BaseCustomer(object):
             else:
                 break
 
+        self._key_md5_digests[(bucket.name, key_name, key.version_id, ) ] = \
+                input_file.md5_digest
+
     def _retrieve_latest(self):
         # pick a random key from a random bucket
         bucket = random.choice(self._buckets.values())
@@ -335,6 +387,15 @@ class BaseCustomer(object):
                 return
             raise
 
+        expected_md5_digest_key = \
+                (bucket.name, key.name, key.version_id, )
+        expected_md5_digest = \
+                self._key_md5_digests[expected_md5_digest_key]
+        if output_file.md5_digest != expected_md5_digest:
+            raise VerificationError(
+                "verification failed {0}".format(
+                    expected_md5_digest_key))
+
     def _retrieve_version(self):
         # pick a random key from the versions of a random bucket
         bucket = random.choice(self._buckets.values())
@@ -359,6 +420,16 @@ class BaseCustomer(object):
                 ))
                 return
             raise
+
+        expected_md5_digest_key = \
+                (bucket.name, key.name, key.version_id, )
+        expected_md5_digest = \
+                self._key_md5_digests[expected_md5_digest_key]
+        if output_file.md5_digest != expected_md5_digest:
+            raise VerificationError(
+                "verification failed {0}".format(
+                    expected_md5_digest_key))
+
 
     def _delete_key(self):
         # pick a random key from a random bucket
