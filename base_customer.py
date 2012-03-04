@@ -37,6 +37,8 @@ class BaseCustomer(object):
         self._halt_event = halt_event
         self._user_identity = user_identity
         self._test_script = test_script
+        self._multipart_upload_cutoff = \
+                2 * self._test_script["multipart-part-size"]
 
         self._default_collection_name = compute_default_collection_name(
             self._user_identity.user_name
@@ -114,6 +116,20 @@ class BaseCustomer(object):
                 ))
                 self._key_name_manager.existing_key_name(key.name)
 
+    def _verify_md5_sum(self, bucket, key, md5_digest):
+        expected_md5_digest_key = \
+                (bucket.name, key.name, key.version_id, )
+        try:
+            expected_md5_digest = \
+                    self._key_md5_digests[expected_md5_digest_key]
+        except KeyError:
+            return
+
+        if md5_digest != expected_md5_digest:
+            raise VerificationError(
+                "verification failed {0}".format(
+                    expected_md5_digest_key))
+
     def _verify_before(self):
         """
         retrieve all known keys to verify that they are reachable
@@ -153,26 +169,12 @@ class BaseCustomer(object):
                         version_id=key.version_id
                     )
                     md5_sum = hashlib.md5(result)
-                    expected_md5_digest_key = \
-                            (bucket.name, key.name, key.version_id, )
-                    expected_md5_digest = \
-                            self._key_md5_digests[expected_md5_digest_key]
-                    if md5_sum.digest() != expected_md5_digest:
-                        raise VerificationError(
-                            "verification failed {0}".format(
-                                expected_md5_digest_key))
+                    self._verify_md5_sum(bucket, key, md5_sum.digest)
             else:
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
-                    expected_md5_digest_key = \
-                            (bucket.name, key.name, key.version_id, )
-                    expected_md5_digest = \
-                            self._key_md5_digests[expected_md5_digest_key]
-                    if md5_sum.digest() != expected_md5_digest:
-                        raise VerificationError(
-                            "verification failed {0}".format(
-                                expected_md5_digest_key))
+                    self._verify_md5_sum(bucket, key, md5_sum.digest)
 
     def _load_frequency_table(self):
         """
@@ -329,14 +331,47 @@ class BaseCustomer(object):
         self._archive(bucket, key_name)
         
     def _archive(self, bucket, key_name, replace=True):
-        key = Key(bucket)
-        key.name = key_name
         size = random.randint(
             self._test_script["min-file-size"],
             self._test_script["max-file-size"]
         )
-        self._log.info("archiving %r into %r %s" % (
-            key_name, bucket.name, size,
+
+        if size > self._multipart_upload_cutoff:
+            self._archive_multipart(bucket, key_name, replace, size)
+        else:
+            self._archive_one_file(bucket, key_name, replace, size)
+
+    def _archive_multipart(self, bucket, key_name, replace, size):
+
+        # divide up the sixe into chunks >= part-isze
+        base_size = self._test_script["multipart-part-size"]
+        part_sizes = [base_size for _ in range(size / base_size)]
+        part_sizes[-1] += size % base_size
+
+        multipart_upload = bucket.initiate_multipart_upload(key_name)
+
+        self._log.info("archive multipart %r %r %s %s" % (
+            bucket.name, key_name, multipart_upload.id, size
+        ))
+
+        # TODO: do this in parallel
+        for i, part_size in enumerate(part_sizes):
+            input_file = MockInputFile(part_size)
+            part_num = i + 1
+            multipart_upload.upload_part_from_file(
+                input_file, part_num, replace
+            )
+
+        multipart_upload.complete_upload()
+
+    def _archive_one_file( self, bucket, key_name, replace, size, ):
+        key = Key(bucket)
+        key.name = key_name
+        self._log.info("archiving %r into %r replace=%s %s" % (
+            key_name, 
+            bucket.name, 
+            replace, 
+            size, 
         ))
 
         retry_count = 0
@@ -346,7 +381,7 @@ class BaseCustomer(object):
             input_file = MockInputFile(size)
 
             try:
-                key.set_contents_from_file(input_file, replace=replace)
+                key.set_contents_from_file(input_file, replace=replace) 
             except LumberyardRetryableHTTPError, instance:
                 if retry_count >= _max_archive_retries:
                     raise
@@ -359,8 +394,8 @@ class BaseCustomer(object):
             else:
                 break
 
-        self._key_md5_digests[(bucket.name, key_name, key.version_id, ) ] = \
-                input_file.md5_digest
+        md5_key = (bucket.name, key_name, key.version_id, )
+        self._key_md5_digests[md5_key] = input_file.md5_digest
 
     def _retrieve_latest(self):
         # pick a random key from a random bucket
@@ -387,14 +422,7 @@ class BaseCustomer(object):
                 return
             raise
 
-        expected_md5_digest_key = \
-                (bucket.name, key.name, key.version_id, )
-        expected_md5_digest = \
-                self._key_md5_digests[expected_md5_digest_key]
-        if output_file.md5_digest != expected_md5_digest:
-            raise VerificationError(
-                "verification failed {0}".format(
-                    expected_md5_digest_key))
+        self._verify_md5_sum(bucket, key, output_file.md5_digest)
 
     def _retrieve_version(self):
         # pick a random key from the versions of a random bucket
@@ -421,15 +449,7 @@ class BaseCustomer(object):
                 return
             raise
 
-        expected_md5_digest_key = \
-                (bucket.name, key.name, key.version_id, )
-        expected_md5_digest = \
-                self._key_md5_digests[expected_md5_digest_key]
-        if output_file.md5_digest != expected_md5_digest:
-            raise VerificationError(
-                "verification failed {0}".format(
-                    expected_md5_digest_key))
-
+        self._verify_md5_sum(bucket, key, output_file.md5_digest)
 
     def _delete_key(self):
         # pick a random key from a random bucket
