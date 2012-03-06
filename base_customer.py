@@ -72,6 +72,11 @@ class BaseCustomer(object):
         self._key_name_generator = None
 
         self._key_md5_digests = dict()
+        self._error_count = 0
+
+    @property
+    def error_count(self):
+        return self._error_count
 
     def _main_loop(self):
         self._s3_connection = motoboto.connect_s3(identity=self._user_identity)
@@ -92,13 +97,16 @@ class BaseCustomer(object):
             try:
                 test_function()
             except Exception:
-                self._log.exception("test_function")
+                self._error_count += 1
+                self._log.exception("test_function error #{0}".format(
+                    self._error_count))
             self._delay()
 
         if self._test_script.get("verify-after", False):
             self._verify_after()
 
         self._s3_connection.close()
+        self._log.info("{0} errors".format(self._error_count))
 
     def _initial_inventory(self):
         """get an initial inventory of buckets and files"""
@@ -126,9 +134,9 @@ class BaseCustomer(object):
             return
 
         if md5_digest != expected_md5_digest:
-            raise VerificationError(
-                "verification failed {0}".format(
-                    expected_md5_digest_key))
+            self._error_count += 1
+            self._log.error("verification failed {0} error #{1}".format(
+                    expected_md5_digest_key, self._error_count))
 
     def _verify_before(self):
         """
@@ -394,6 +402,12 @@ class BaseCustomer(object):
             else:
                 break
 
+        self._log.info("%r into %r %s version_id = %s" % (
+            key_name, 
+            bucket.name, 
+            size,
+            key.version_id, 
+        ))
         md5_key = (bucket.name, key_name, key.version_id, )
         self._key_md5_digests[md5_key] = input_file.md5_digest
 

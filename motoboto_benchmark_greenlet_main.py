@@ -71,11 +71,13 @@ def main():
     log.info("setting halt event")
     halt_event.set()
     
+    total_error_count = 0
     log.info("joining")
     for customer in customer_list:
         customer.join()
+        total_error_count += customer.error_count
     
-    log.info("program ends")
+    log.info("program ends {0} totaal errors")
     return 0
 
 if __name__ == "__main__":
