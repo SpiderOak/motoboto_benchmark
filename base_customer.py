@@ -71,7 +71,7 @@ class BaseCustomer(object):
         self._key_name_manager = KeyNameManager() 
         self._key_name_generator = None
 
-        self._key_md5_digests = dict()
+        self.key_verification = dict()
         self._error_count = 0
 
     @property
@@ -124,18 +124,26 @@ class BaseCustomer(object):
                 ))
                 self._key_name_manager.existing_key_name(key.name)
 
-    def _verify_md5_sum(self, bucket, key, md5_digest):
-        expected_md5_digest_key = \
-                (bucket.name, key.name, key.version_id, )
+    def _verify_key(self, bucket, key, data_size, md5_digest):
+        verification_key = (bucket.name, key.name, key.version_id, )
         try:
-            expected_md5_digest = \
-                    self._key_md5_digests[expected_md5_digest_key]
+            expected_data_size, expected_md5_digest = \
+                    self.key_verification[verification_key]
         except KeyError:
             return
 
-        if md5_digest != expected_md5_digest:
+        if data_size != expected_data_size:
             self._error_count += 1
-            self._log.error("verification failed {0} error #{1}".format(
+            self._log.error("size mistmatch {0:,} {1:,} {2} error #{3}".format(
+                data_size,
+                expected_data_size,
+                verification_key, 
+                self._error_count))
+
+        if expected_md5_digest is not None and \
+           md5_digest != expected_md5_digest:
+            self._error_count += 1
+            self._log.error("md5 mismatch {0} error #{1}".format(
                     expected_md5_digest_key, self._error_count))
 
     def _verify_before(self):
@@ -151,17 +159,17 @@ class BaseCustomer(object):
                     result = key.get_contents_as_string(
                         version_id=key.version_id
                     )
+                    verification_key = (bucket.name, key.name, key.version_id)
                     md5_sum = hashlib.md5(result)
-                    self._key_md5_digests[
-                        (bucket.name, key.name, key.version_id, )
-                    ] = md5_sum.digest()
+                    self.key_verification[verification_key] = \
+                        (len(result), md5_sum.digest(), )
             else:
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
-                    self._key_md5_digests[
-                        (bucket.name, key.name, key.version_id, )
-                    ] = md5_sum.digest()
+                    verification_key = (bucket.name, key.name, key.version_id)
+                    self.key_verification[verification_key] = \
+                        (len(result), md5_sum.digest(), )
 
     def _verify_after(self):
         """
@@ -177,12 +185,18 @@ class BaseCustomer(object):
                         version_id=key.version_id
                     )
                     md5_sum = hashlib.md5(result)
-                    self._verify_md5_sum(bucket, key, md5_sum.digest)
+                    self._verify_key(bucket, 
+                                     key, 
+                                     len(result), 
+                                     md5_sum.digest())
             else:
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
-                    self._verify_md5_sum(bucket, key, md5_sum.digest)
+                    self._verify_key(bucket, 
+                                     key, 
+                                     len(result), 
+                                     md5_sum.digest())
 
     def _load_frequency_table(self):
         """
@@ -372,6 +386,9 @@ class BaseCustomer(object):
 
         multipart_upload.complete_upload()
 
+        verification_key = (bucket.name, key_name, multipart_upload.id, )
+        self.key_verification[verification_key] = (size, None, )
+
     def _archive_one_file( self, bucket, key_name, replace, size, ):
         key = Key(bucket)
         key.name = key_name
@@ -408,8 +425,9 @@ class BaseCustomer(object):
             size,
             key.version_id, 
         ))
-        md5_key = (bucket.name, key_name, key.version_id, )
-        self._key_md5_digests[md5_key] = input_file.md5_digest
+        verification_key = (bucket.name, key_name, key.version_id, )
+        self.key_verification[verification_key] = \
+                (size, input_file.md5_digest, )
 
     def _retrieve_latest(self):
         # pick a random key from a random bucket
@@ -436,7 +454,10 @@ class BaseCustomer(object):
                 return
             raise
 
-        self._verify_md5_sum(bucket, key, output_file.md5_digest)
+        self._verify_key(bucket, 
+                         key, 
+                         output_file.bytes_written, 
+                         output_file.md5_digest)
 
     def _retrieve_version(self):
         # pick a random key from the versions of a random bucket
@@ -463,7 +484,10 @@ class BaseCustomer(object):
                 return
             raise
 
-        self._verify_md5_sum(bucket, key, output_file.md5_digest)
+        self._verify_key(bucket, 
+                         key, 
+                         output_file.bytes_written,
+                         output_file.md5_digest)
 
     def _delete_key(self):
         # pick a random key from a random bucket
