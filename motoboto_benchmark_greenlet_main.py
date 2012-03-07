@@ -77,7 +77,7 @@ def main():
         customer.join()
         total_error_count += customer.error_count
     
-    log.info("program ends {0:,} total errors".format(total_error_count))
+    log.info("program ends {0} total errors".format(total_error_count))
     return 0
 
 if __name__ == "__main__":

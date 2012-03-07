@@ -134,7 +134,7 @@ class BaseCustomer(object):
 
         if data_size != expected_data_size:
             self._error_count += 1
-            self._log.error("size mistmatch {0:,} {1:,} {2} error #{3}".format(
+            self._log.error("size mistmatch {0} {1} {2} error #{3}".format(
                 data_size,
                 expected_data_size,
                 verification_key, 
