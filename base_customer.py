@@ -144,7 +144,7 @@ class BaseCustomer(object):
            md5_digest != expected_md5_digest:
             self._error_count += 1
             self._log.error("md5 mismatch {0} error #{1}".format(
-                    expected_md5_digest_key, self._error_count))
+                    verification_key, self._error_count))
 
     def _verify_before(self):
         """
@@ -365,12 +365,30 @@ class BaseCustomer(object):
 
     def _archive_multipart(self, bucket, key_name, replace, size):
 
-        # divide up the sixe into chunks >= part-isze
+        # divide up the size into chunks >= part-isze
         base_size = self._test_script["multipart-part-size"]
         part_sizes = [base_size for _ in range(size / base_size)]
         part_sizes[-1] += size % base_size
 
-        multipart_upload = bucket.initiate_multipart_upload(key_name)
+        retry_count = 0
+        while not self._halt_event.is_set():
+            try:
+                multipart_upload = bucket.initiate_multipart_upload(key_name)
+            except LumberyardRetryableHTTPError, instance:
+                if retry_count >= _max_delete_retries:
+                    raise
+                self._log.warn("%s: retry in %s seconds" % (
+                    instance, instance.retry_after,
+                ))
+                self._halt_event.wait(timeout=instance.retry_after)
+                retry_count += 1
+                self._log.warn("retry #%s" % (retry_count, ))
+            else:
+                break
+
+        if self._halt_event.is_set():
+            self._log.info("halt_event set")
+            return
 
         self._log.info("archive multipart %r %r %s %s" % (
             bucket.name, key_name, multipart_upload.id, size
@@ -378,13 +396,49 @@ class BaseCustomer(object):
 
         # TODO: do this in parallel
         for i, part_size in enumerate(part_sizes):
-            input_file = MockInputFile(part_size)
             part_num = i + 1
-            multipart_upload.upload_part_from_file(
-                input_file, part_num, replace
-            )
+            retry_count = 0
+            while not self._halt_event.is_set():
+                input_file = MockInputFile(part_size)
+                try:
+                    multipart_upload.upload_part_from_file(
+                        input_file, part_num, replace
+                    )
+                except LumberyardRetryableHTTPError, instance:
+                    if retry_count >= _max_delete_retries:
+                        raise
+                    self._log.warn("%s: retry in %s seconds" % (
+                        instance, instance.retry_after,
+                    ))
+                    self._halt_event.wait(timeout=instance.retry_after)
+                    retry_count += 1
+                    self._log.warn("retry #%s" % (retry_count, ))
+                else:
+                    break
 
-        multipart_upload.complete_upload()
+            if self._halt_event.is_set():
+                self._log.info("halt_event set")
+                return
+
+        retry_count = 0
+        while not self._halt_event.is_set():
+            try:
+                multipart_upload.complete_upload()
+            except LumberyardRetryableHTTPError, instance:
+                if retry_count >= _max_delete_retries:
+                    raise
+                self._log.warn("%s: retry in %s seconds" % (
+                    instance, instance.retry_after,
+                ))
+                self._halt_event.wait(timeout=instance.retry_after)
+                retry_count += 1
+                self._log.warn("retry #%s" % (retry_count, ))
+            else:
+                break
+
+        if self._halt_event.is_set():
+            self._log.info("halt_event set")
+            return
 
         verification_key = (bucket.name, key_name, multipart_upload.id, )
         self.key_verification[verification_key] = (size, None, )
