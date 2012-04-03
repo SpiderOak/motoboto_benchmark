@@ -454,7 +454,6 @@ class BaseCustomer(object):
         ))
 
         retry_count = 0
-
         while not self._halt_event.is_set():
 
             input_file = MockInputFile(size)
@@ -470,18 +469,19 @@ class BaseCustomer(object):
                 self._halt_event.wait(timeout=instance.retry_after)
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
-            else:
-                break
+                continue
 
-        self._log.info("%r into %r %s version_id = %s" % (
-            key_name, 
-            bucket.name, 
-            size,
-            key.version_id, 
-        ))
-        verification_key = (bucket.name, key_name, key.version_id, )
-        self.key_verification[verification_key] = \
-                (size, input_file.md5_digest, )
+            self._log.info("%r into %r %s version_id = %s" % (
+                key_name, 
+                bucket.name, 
+                size,
+                key.version_id, 
+            ))
+            verification_key = (bucket.name, key_name, key.version_id, )
+            self.key_verification[verification_key] = \
+                    (size, input_file.md5_digest, )
+
+            break
 
     def _retrieve_latest(self):
         # pick a random key from a random bucket
