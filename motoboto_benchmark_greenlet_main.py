@@ -28,6 +28,13 @@ from greenlet_customer import GreenletCustomer
 def _handle_sigterm(halt_event):
     halt_event.set()
 
+def _unhandled_greenlet_exception(greenlet_object):
+    log = logging.getLogger("_unhandled_greelent_exception")
+    try:
+        greenlet_object.get()
+    except Exception:
+        log.exception(str(greenlet_object))
+
 def main():
     """
     main processing module
@@ -59,6 +66,7 @@ def main():
             os.path.join(options.user_identity_dir, file_name)
         )
         customer = GreenletCustomer(halt_event, user_identity, test_script)
+        customer.link_exception(_unhandled_greenlet_exception)
         customer.start()
         customer_list.append(customer)
 
