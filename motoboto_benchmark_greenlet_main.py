@@ -56,7 +56,7 @@ def main():
     ))
     customer_list = list()
     for file_name in os.listdir(options.user_identity_dir):
-        if not 'motoboto' in file_name and 'benchmark' in file_name:
+        if not ('motoboto' in file_name and 'benchmark' in file_name):
             continue
         if options.max_users is not None \
         and len(customer_list) >= options.max_users:
