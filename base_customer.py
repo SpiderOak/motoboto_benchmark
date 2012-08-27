@@ -146,6 +146,34 @@ class BaseCustomer(object):
             self._log.error("md5 mismatch {0} error #{1}".format(
                     verification_key, self._error_count))
 
+    def _verify_key_final(self, bucket, key, data_size, md5_digest):
+        """
+        remove key when verifying, so we can track unmatched keys
+        """
+        verification_key = (bucket.name, key.name, key.version_id, )
+        try:
+            expected_data_size, expected_md5_digest = \
+                self.key_verification.pop(verification_key)
+        except KeyError:
+            self._error_count += 1
+            self._log.error("key not found {0} error #{1}".format(
+                verification_key))
+            return
+
+        if data_size != expected_data_size:
+            self._error_count += 1
+            self._log.error("size mistmatch {0} {1} {2} error #{3}".format(
+                data_size,
+                expected_data_size,
+                verification_key, 
+                self._error_count))
+
+        if expected_md5_digest is not None and \
+           md5_digest != expected_md5_digest:
+            self._error_count += 1
+            self._log.error("md5 mismatch {0} error #{1}".format(
+                    verification_key, self._error_count))
+
     def _verify_before(self):
         """
         retrieve all known keys to verify that they are reachable
@@ -176,7 +204,7 @@ class BaseCustomer(object):
         retrieve all known keys to verify that they are reachable
         check md5 digests if they exist
         """
-        self._log.info("verifying retrieves before")
+        self._log.info("verifying retrieves after")
         buckets = self._s3_connection.get_all_buckets()
         for bucket in buckets:
             if bucket.versioning:
@@ -185,18 +213,24 @@ class BaseCustomer(object):
                         version_id=key.version_id
                     )
                     md5_sum = hashlib.md5(result)
-                    self._verify_key(bucket, 
-                                     key, 
-                                     len(result), 
-                                     md5_sum.digest())
+                    self._verify_key_final(bucket, 
+                                           key, 
+                                           len(result), 
+                                           md5_sum.digest())
             else:
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
-                    self._verify_key(bucket, 
-                                     key, 
-                                     len(result), 
-                                     md5_sum.digest())
+                    self._verify_key_final(bucket, 
+                                           key, 
+                                           len(result), 
+                                           md5_sum.digest())
+
+        
+        self._log.info("{0} unreachable keys".format(
+            len(self.key_verification)))
+        for key, value in self.key_verification.items():
+            self._log.error("unreachable key {0} {1}".format(key, value))
 
     def _load_frequency_table(self):
         """
