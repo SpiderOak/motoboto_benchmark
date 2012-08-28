@@ -157,7 +157,7 @@ class BaseCustomer(object):
         except KeyError:
             self._error_count += 1
             self._log.error("key not found {0} error #{1}".format(
-                verification_key))
+                verification_key, self._error_count))
             return
 
         if data_size != expected_data_size:
@@ -230,6 +230,7 @@ class BaseCustomer(object):
         self._log.info("{0} unreachable keys".format(
             len(self.key_verification)))
         for key, value in self.key_verification.items():
+            self._error_count += 1
             self._log.error("unreachable key {0} {1}".format(key, value))
 
     def _load_frequency_table(self):
@@ -326,6 +327,8 @@ class BaseCustomer(object):
                     retry_count += 1
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
+                    verification_key = (bucket.name, key.name, key.version_id)
+                    del self.key_verification[verification_key]
                     break
 
             if self._halt_event.is_set():
@@ -603,6 +606,8 @@ class BaseCustomer(object):
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
+                verification_key = (bucket.name, key.name, key.version_id)
+                del self.key_verification[verification_key]
                 break
 
     def _delete_version(self):
@@ -633,5 +638,7 @@ class BaseCustomer(object):
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
+                verification_key = (bucket.name, key.name, key.version_id)
+                del self.key_verification[verification_key]
                 break
 
