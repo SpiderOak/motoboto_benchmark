@@ -189,6 +189,9 @@ class BaseCustomer(object):
                     )
                     verification_key = (bucket.name, key.name, key.version_id)
                     md5_sum = hashlib.md5(result)
+                    if verification_key in self.key_verification:
+                        self._log.error("duplicate key (versioning) %s" % (
+                            verification_key, ))
                     self.key_verification[verification_key] = \
                         (len(result), md5_sum.digest(), )
             else:
@@ -196,6 +199,9 @@ class BaseCustomer(object):
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
                     verification_key = (bucket.name, key.name, key.version_id)
+                    if verification_key in self.key_verification:
+                        self._log.error("duplicate key %s" % (
+                            verification_key, ))
                     self.key_verification[verification_key] = \
                         (len(result), md5_sum.digest(), )
 
@@ -328,7 +334,12 @@ class BaseCustomer(object):
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
                     verification_key = (bucket.name, key.name, key.version_id)
-                    del self.key_verification[verification_key]
+                    try:
+                        del self.key_verification[verification_key]
+                    except KeyError:
+                        self._log.error(
+                            "_delete_bucket verification key not found %s" % (
+                                verification_key, ))
                     break
 
             if self._halt_event.is_set():
@@ -478,6 +489,9 @@ class BaseCustomer(object):
             return
 
         verification_key = (bucket.name, key_name, multipart_upload.id, )
+        if verification_key in self.key_verification:
+            self._log.error("_archive_multipart duplicate key %s" % (
+                verification_key, ))
         self.key_verification[verification_key] = (size, None, )
 
     def _archive_one_file( self, bucket, key_name, replace, size, ):
@@ -515,6 +529,9 @@ class BaseCustomer(object):
                 key.version_id, 
             ))
             verification_key = (bucket.name, key_name, key.version_id, )
+            if verification_key in self.key_verification:
+                self._log.error("_archive_one_file duplicate key %s" % (
+                    verification_key, ))
             self.key_verification[verification_key] = \
                     (size, input_file.md5_digest, )
 
@@ -607,7 +624,11 @@ class BaseCustomer(object):
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
                 verification_key = (bucket.name, key.name, key.version_id)
-                del self.key_verification[verification_key]
+                try:
+                    del self.key_verification[verification_key]
+                except KeyError:
+                    self._log.error("_delete_key missing key %s" % (
+                        verification_key, ))
                 break
 
     def _delete_version(self):
@@ -639,6 +660,10 @@ class BaseCustomer(object):
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
                 verification_key = (bucket.name, key.name, key.version_id)
-                del self.key_verification[verification_key]
+                try:
+                    del self.key_verification[verification_key]
+                except KeyError:
+                    self._log.error("_delete_version missing key %s" % (
+                        verification_key, ))
                 break
 
