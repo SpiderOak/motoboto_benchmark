@@ -29,11 +29,12 @@ def _handle_sigterm(halt_event):
     halt_event.set()
 
 def _unhandled_greenlet_exception(greenlet_object):
-    log = logging.getLogger("_unhandled_greelent_exception")
-    try:
-        greenlet_object.get()
-    except Exception:
-        log.exception(str(greenlet_object))
+    log = logging.getLogger("_unhandled_greenlet_exception")
+    error_message = "%s %s %s" % (
+        str(greenlet_object),
+        greenlet_object.exception.__class__.__name__,
+        str(greenlet_object.exception))
+    log.error(error_message)
 
 def main():
     """

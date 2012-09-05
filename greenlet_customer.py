@@ -23,3 +23,6 @@ class GreenletCustomer(Greenlet, BaseCustomer):
     def _run(self):
         self._main_loop()
 
+    def __str__(self):
+       return self._user_identity.user_name
+
