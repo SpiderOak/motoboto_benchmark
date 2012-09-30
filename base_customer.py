@@ -397,6 +397,13 @@ class BaseCustomer(object):
         else:
             key = random.choice(keys)
             key_name = key.name
+            verification_key = (bucket.name, key.name, key.version_id)
+            try:
+                del self.key_verification[verification_key]
+            except KeyError:
+                self._log.error(
+                    "_archive_overwrite verification key not found %s" % (
+                        verification_key, ))
 
         self._archive(bucket, key_name)
         

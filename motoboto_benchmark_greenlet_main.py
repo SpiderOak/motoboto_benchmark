@@ -28,7 +28,10 @@ from greenlet_customer import GreenletCustomer
 def _handle_sigterm(halt_event):
     halt_event.set()
 
+_unhandled_exception_count = 0
 def _unhandled_greenlet_exception(greenlet_object):
+    global _unhandled_exception_count 
+    _unhandled_exception_count += 1 
     log = logging.getLogger("_unhandled_greenlet_exception")
     error_message = "%s %s %s" % (
         str(greenlet_object),
@@ -88,7 +91,8 @@ def main():
         customer.join()
         total_error_count += customer.error_count
     
-    log.info("program ends {0} total errors".format(total_error_count))
+    log.info("program ends {0} total errors, {1} unhandled exceptions".format(
+        total_error_count, _unhandled_exception_count))
     return 0
 
 if __name__ == "__main__":
