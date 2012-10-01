@@ -130,6 +130,9 @@ class BaseCustomer(object):
             expected_data_size, expected_md5_digest = \
                     self.key_verification[verification_key]
         except KeyError:
+            self._error_count += 1
+            self._log.error("_verify_key key not found {0} error #{1}".format(
+                verification_key, self._error_count))
             return
 
         if data_size != expected_data_size:
@@ -643,7 +646,7 @@ class BaseCustomer(object):
         bucket = random.choice(self._buckets.values())
         keys = bucket.get_all_versions()
         if len(keys) == 0:
-            self._log.warn("skipping _retrieve_version, no keys yet")
+            self._log.warn("skipping _delete_version, no keys yet")
             return
         key = random.choice(keys)
 
