@@ -236,11 +236,12 @@ class BaseCustomer(object):
                                            md5_sum.digest())
 
         
-        self._log.info("{0} unreachable keys".format(
-            len(self.key_verification)))
-        for key, value in self.key_verification.items():
-            self._error_count += 1
-            self._log.error("unreachable key {0} {1}".format(key, value))
+        if len(self.key_verification) > 0:
+            self._log.info("{0} unreachable keys".format(
+                len(self.key_verification)))
+            for key, value in self.key_verification.items():
+                self._error_count += 1
+                self._log.error("unreachable key {0} {1}".format(key, value))
 
     def _load_frequency_table(self):
         """
@@ -303,24 +304,35 @@ class BaseCustomer(object):
             return
 
         bucket_name = random.choice(eligible_bucket_names)
-        self._log.info("delete bucket %r" % (bucket_name, ))
         bucket = self._buckets.pop(bucket_name)
-        try:
-            i = self._unversioned_bucket_names.index(bucket_name)
-        except ValueError:
-            pass
-        else:
-            del self._unversioned_bucket_names[i]
-        try:
-            i = self._versioned_bucket_names.index(bucket_name)
-        except ValueError:
-            pass
-        else:
-            del self._versioned_bucket_names[i]
-        self._bucket_name_manager.deleted_bucket_name(bucket_name)
+        self._log.info("delete bucket {0} versioned={1}".format(
+            bucket.name, bucket.versioning))
 
-        # delete all the keys for the bucket
-        for key in bucket.get_all_keys():
+        if bucket.versioning:
+            try:
+                i = self._versioned_bucket_names.index(bucket_name)
+            except ValueError:
+                self._log.error("not found in versioned buckets {0}".format(
+                    bucket.name))
+            else:
+                del self._versioned_bucket_names[i]
+            iterator = bucket.get_all_versions
+        else:
+            try:
+                i = self._unversioned_bucket_names.index(bucket_name)
+            except ValueError:
+                self._log.error("not found in unversioned buckets {0}".format(
+                    bucket.name))
+            else:
+                del self._unversioned_bucket_names[i]
+            iterator = bucket.get_all_keys
+        self._bucket_name_manager.deleted_bucket_name(bucket.name)
+
+        # delete all the keys (or versions) for the bucket
+        for key in iterator():
+            verification_key = (bucket.name, key.name, key.version_id)
+            self._log.info("_delete_bucket deleting key {0}".format(
+                verification_key))
             retry_count = 0
             while not self._halt_event.is_set():
 
@@ -336,7 +348,6 @@ class BaseCustomer(object):
                     retry_count += 1
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
-                    verification_key = (bucket.name, key.name, key.version_id)
                     try:
                         del self.key_verification[verification_key]
                     except KeyError:
@@ -401,6 +412,7 @@ class BaseCustomer(object):
             key = random.choice(keys)
             key_name = key.name
             verification_key = (bucket.name, key.name, key.version_id)
+            self._log.info("overwriting {0}".format(verification_key))
             try:
                 del self.key_verification[verification_key]
             except KeyError:
@@ -532,13 +544,8 @@ class BaseCustomer(object):
                 self._log.warn("retry #%s" % (retry_count, ))
                 continue
 
-            self._log.info("%r into %r %s version_id = %s" % (
-                key_name, 
-                bucket.name, 
-                size,
-                key.version_id, 
-            ))
-            verification_key = (bucket.name, key_name, key.version_id, )
+            verification_key = (bucket.name, key.name, key.version_id, )
+            self._log.info("archived {0}".format(verification_key))
             if verification_key in self.key_verification:
                 self._log.error("_archive_one_file duplicate key %s" % (
                     verification_key, ))
@@ -616,7 +623,8 @@ class BaseCustomer(object):
             return
         key = random.choice(keys)
 
-        self._log.info("deleting %r from %r" % (key.name, bucket.name, ))
+        verification_key = (bucket.name, key.name, key.version_id)
+        self._log.info("deleting key {0}".format(verification_key))
 
         retry_count = 0
         while not self._halt_event.is_set():
@@ -633,7 +641,6 @@ class BaseCustomer(object):
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
-                verification_key = (bucket.name, key.name, key.version_id)
                 try:
                     del self.key_verification[verification_key]
                 except KeyError:
@@ -650,9 +657,8 @@ class BaseCustomer(object):
             return
         key = random.choice(keys)
 
-        self._log.info("deleting %r version %s from %r" % (
-            key.name, key.version_id, bucket.name, 
-        ))
+        verification_key = (bucket.name, key.name, key.version_id)
+        self._log.info("deleting version {0}".format(verification_key))
 
         retry_count = 0
         while not self._halt_event.is_set():
@@ -669,7 +675,6 @@ class BaseCustomer(object):
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
-                verification_key = (bucket.name, key.name, key.version_id)
                 try:
                     del self.key_verification[verification_key]
                 except KeyError:
