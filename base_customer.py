@@ -563,7 +563,7 @@ class BaseCustomer(object):
                 "_retrieve_latest ignored: noun versioned buckets"
             )
             return
-        bucket_name = random.choice(self._versioned_bucket_names)
+        bucket_name = random.choice(self._unversioned_bucket_names)
         bucket = self._buckets[bucket_name]
         keys = bucket.get_all_keys()
         if len(keys) == 0:
