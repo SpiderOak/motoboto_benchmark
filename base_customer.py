@@ -273,7 +273,6 @@ class BaseCustomer(object):
         if bucket_name is None:
             self._log.info("ignore _create_bucket")
             return
-        self._log.info("create bucket %r" % (bucket_name, ))
         new_bucket = self._s3_connection.create_bucket(bucket_name)
         self._buckets[new_bucket.name] = new_bucket  
 
@@ -284,6 +283,8 @@ class BaseCustomer(object):
         if bucket is None:
             return
 
+        self._log.info("create unversioned bucket {0} {1}".format(
+            bucket.name, bucket.versioning, ))
         self._unversioned_bucket_names.append(bucket.name)
 
     def _create_versioned_bucket(self):
@@ -292,6 +293,8 @@ class BaseCustomer(object):
             return
 
         bucket.configure_versioning(True)
+        self._log.info("create versioned bucket {0} {1}".format(
+            bucket.name, bucket.versioning, ))
         self._versioned_bucket_names.append(bucket.name)
 
     def _delete_bucket(self):
@@ -519,11 +522,10 @@ class BaseCustomer(object):
     def _archive_one_file( self, bucket, key_name, replace, size, ):
         key = Key(bucket)
         key.name = key_name
-        self._log.info("archiving %r into %r replace=%s %s" % (
-            key_name, 
+        self._log.info("_archive_one_file ({0} {1} ...) versioning={2}".format(
             bucket.name, 
-            replace, 
-            size, 
+            key.name, 
+            bucket.versioning,
         ))
 
         retry_count = 0
@@ -556,7 +558,13 @@ class BaseCustomer(object):
 
     def _retrieve_latest(self):
         # pick a random key from a random bucket
-        bucket = random.choice(self._buckets.values())
+        if len(self._unversioned_bucket_names) == 0:
+            self._log.warn(
+                "_retrieve_latest ignored: noun versioned buckets"
+            )
+            return
+        bucket_name = random.choice(self._versioned_bucket_names)
+        bucket = self._buckets[bucket_name]
         keys = bucket.get_all_keys()
         if len(keys) == 0:
             self._log.warn("skipping _retrieve_latest, no keys yet")
@@ -586,7 +594,15 @@ class BaseCustomer(object):
 
     def _retrieve_version(self):
         # pick a random key from the versions of a random bucket
-        bucket = random.choice(self._buckets.values())
+        # XXX: this suppresses the (error?) of finding written over
+        # 'versions' of an unversioned file
+        if len(self._versioned_bucket_names) == 0:
+            self._log.warn(
+                "_retrieve_version ignored: no versioned buckets"
+            )
+            return
+        bucket_name = random.choice(self._versioned_bucket_names)
+        bucket = self._buckets[bucket_name]
         keys = bucket.get_all_versions()
         if len(keys) == 0:
             self._log.warn("skipping _retrieve_version, no keys yet")
@@ -623,8 +639,7 @@ class BaseCustomer(object):
             return
         key = random.choice(keys)
 
-        verification_key = (bucket.name, key.name, key.version_id)
-        self._log.info("deleting key {0}".format(verification_key))
+        self._log.info("_delete_key {0} {1}".format(bucket.name, key.name))
 
         retry_count = 0
         while not self._halt_event.is_set():
@@ -641,21 +656,50 @@ class BaseCustomer(object):
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
-                try:
-                    del self.key_verification[verification_key]
-                except KeyError:
-                    self._log.error("_delete_key missing key %s" % (
-                        verification_key, ))
                 break
+
+        # if we delete a key, (not just a version)
+        # we need to heave every version we are holding of that key
+        delete_list = list()
+        for entry in self.key_verification.keys():
+            entry_bucket_name, entry_key_name, _ = entry
+            if entry_bucket_name == bucket.name and entry_key_name == key.name:
+               delete_list.append(entry)
+
+        for verification_key in delete_list:               
+            self._log.info("_delete_key: removing {0}".format(
+                verification_key))
+            del self.key_verification[verification_key]
 
     def _delete_version(self):
         # pick a random key from the versions of a random bucket
         bucket = random.choice(self._buckets.values())
         keys = bucket.get_all_versions()
+
         if len(keys) == 0:
             self._log.warn("skipping _delete_version, no keys yet")
             return
-        key = random.choice(keys)
+
+        # we only want to delete a version if there are more than one versions
+        # otherwise we are deleting the key
+        version_dict = dict()
+        for key in keys:
+            if key.name in version_dict:
+                version_dict[key.name].append(key)
+            else:
+                version_dict[key.name] = [key, ]
+
+        keys_with_multiple_versions = list()
+        for key_name in version_dict.keys():
+            if len(version_dict[key_name]) > 1:
+                keys_with_multiple_versions.extend(version_dict[key_name])
+
+        if len(keys_with_multiple_versions) == 0:
+            self._log.warn(
+                "skipping _delete_version, no keys with multiple versions")
+            return
+
+        key = random.choice(keys_with_multiple_versions)
 
         verification_key = (bucket.name, key.name, key.version_id)
         self._log.info("deleting version {0}".format(verification_key))
