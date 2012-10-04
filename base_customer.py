@@ -664,7 +664,7 @@ class BaseCustomer(object):
         for entry in self.key_verification.keys():
             entry_bucket_name, entry_key_name, _ = entry
             if entry_bucket_name == bucket.name and entry_key_name == key.name:
-               delete_list.append(entry)
+                delete_list.append(entry)
 
         for verification_key in delete_list:               
             self._log.info("_delete_key: removing {0}".format(
@@ -673,7 +673,16 @@ class BaseCustomer(object):
 
     def _delete_version(self):
         # pick a random key from the versions of a random bucket
-        bucket = random.choice(self._buckets.values())
+        # XXX: this suppresses the (error?) of finding written over
+        # 'versions' of an unversioned file
+        if len(self._versioned_bucket_names) == 0:
+            self._log.warn(
+                "_delete_version ignored: no versioned buckets"
+            )
+            return
+        bucket_name = random.choice(self._versioned_bucket_names)
+        bucket = self._buckets[bucket_name]
+
         keys = bucket.get_all_versions()
 
         if len(keys) == 0:
