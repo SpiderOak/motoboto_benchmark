@@ -312,27 +312,61 @@ class BaseCustomer(object):
             bucket.name, bucket.versioning))
 
         if bucket.versioning:
-            try:
-                i = self._versioned_bucket_names.index(bucket_name)
-            except ValueError:
-                self._log.error("not found in versioned buckets {0}".format(
-                    bucket.name))
-            else:
-                del self._versioned_bucket_names[i]
-            iterator = bucket.get_all_versions
+            self._clear_versioned_bucket(bucket)
         else:
-            try:
-                i = self._unversioned_bucket_names.index(bucket_name)
-            except ValueError:
-                self._log.error("not found in unversioned buckets {0}".format(
-                    bucket.name))
-            else:
-                del self._unversioned_bucket_names[i]
-            iterator = bucket.get_all_keys
+            self._clear_unversioned_bucket(bucket)
+
         self._bucket_name_manager.deleted_bucket_name(bucket.name)
 
+        self._s3_connection.delete_bucket(bucket.name)
+
+    def _clear_versioned_bucket(self, bucket):
+        try:
+            i = self._versioned_bucket_names.index(bucket.name)
+        except ValueError:
+            self._log.error("not found in versioned buckets {0}".format(
+                bucket.name))
+        else:
+            del self._versioned_bucket_names[i]
+
         # delete all the keys (or versions) for the bucket
-        for key in iterator():
+        for key in bucket.get_all_versions():
+            verification_key = (bucket.name, key.name, key.version_id)
+            self._log.info("_delete_bucket deleting version {0}".format(
+                verification_key))
+            retry_count = 0
+            while not self._halt_event.is_set():
+
+                try:
+                    key.delete(version_id=key.version_id)
+                except LumberyardRetryableHTTPError, instance:
+                    if retry_count >= _max_delete_retries:
+                        raise
+                    self._log.warn("%s: retry in %s seconds" % (
+                        instance, instance.retry_after,
+                    ))
+                    self._halt_event.wait(timeout=instance.retry_after)
+                    retry_count += 1
+                    self._log.warn("retry #%s" % (retry_count, ))
+                else:
+                    try:
+                        del self.key_verification[verification_key]
+                    except KeyError:
+                        self._log.error(
+                            "_delete_bucket verification key not found %s" % (
+                                verification_key, ))
+                    break
+
+    def _clear_unversioned_bucket(self, bucket):
+        try:
+            i = self._unversioned_bucket_names.index(bucket.name)
+        except ValueError:
+            self._log.error("not found in unversioned buckets {0}".format(
+                bucket.name))
+        else:
+            del self._unversioned_bucket_names[i]
+
+        for key in bucket.get_all_keys():
             verification_key = (bucket.name, key.name, key.version_id)
             self._log.info("_delete_bucket deleting key {0}".format(
                 verification_key))
@@ -358,12 +392,6 @@ class BaseCustomer(object):
                             "_delete_bucket verification key not found %s" % (
                                 verification_key, ))
                     break
-
-            if self._halt_event.is_set():
-                self._log.info("halt_event set")
-                return
-
-        self._s3_connection.delete_bucket(bucket.name)
 
     def _archive_new_key(self):
         """
