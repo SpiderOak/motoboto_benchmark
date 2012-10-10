@@ -660,7 +660,13 @@ class BaseCustomer(object):
 
     def _delete_key(self):
         # pick a random key from a random bucket
-        bucket = random.choice(self._buckets.values())
+        if len(self._unversioned_bucket_names) == 0:
+            self._log.warn(
+                "_delete_key ignored: no unversioned buckets"
+            )
+            return
+        bucket_name = random.choice(self._unversioned_bucket_names)
+        bucket = self._buckets[bucket_name]
         keys = bucket.get_all_keys()
         if len(keys) == 0:
             self._log.warn("skipping _delete_key, no keys yet")
