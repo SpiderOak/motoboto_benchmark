@@ -39,6 +39,11 @@ class BaseCustomer(object):
         self._test_script = test_script
         self._multipart_upload_cutoff = \
                 2 * self._test_script["multipart-part-size"]
+        if "archive-failure-percent" in self._test_script:
+            self._archive_failure_percent = \
+                self._test_script["archive-failure-percent"]
+        else:
+            self._archive_failure_percent = 0
 
         self._default_collection_name = compute_default_collection_name(
             self._user_identity.user_name
@@ -497,10 +502,11 @@ class BaseCustomer(object):
 
         # TODO: do this in parallel
         for i, part_size in enumerate(part_sizes):
+            force_error = random.randint(0, 99) < self._archive_failure_percent
             part_num = i + 1
             retry_count = 0
             while not self._halt_event.is_set():
-                input_file = MockInputFile(part_size)
+                input_file = MockInputFile(part_size, force_error=force_error)
                 try:
                     multipart_upload.upload_part_from_file(
                         input_file, part_num, replace
@@ -557,9 +563,10 @@ class BaseCustomer(object):
         ))
 
         retry_count = 0
+        force_error = random.randint(0, 99) < self._archive_failure_percent
         while not self._halt_event.is_set():
 
-            input_file = MockInputFile(size)
+            input_file = MockInputFile(size, force_error)
 
             try:
                 key.set_contents_from_file(input_file, replace=replace) 
