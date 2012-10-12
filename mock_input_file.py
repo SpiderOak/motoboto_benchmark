@@ -5,11 +5,12 @@ mock_input_file.py
 An object that acts like an input file, returning a specified number of 
 bytes
 """
+import errno
 import hashlib
 from itertools import cycle, islice
 from string import printable
 
-class MockInputFileError(Exception):
+class MockInputFileError(IOError):
     pass
 
 class MockInputFile(object):
@@ -34,7 +35,7 @@ class MockInputFile(object):
 
         if size is None or size >= bytes_remaining:
             if self._force_error:
-                raise MockInputFileError()
+                raise MockInputFileError(errno.EIO, "Mock IOError")
             self._bytes_read = self._total_size
             data = "".join(islice(self._source, bytes_remaining))
             self._md5_sum.update(data)
@@ -45,7 +46,7 @@ class MockInputFile(object):
         if self._force_error:
             bytes_remaining = self._total_size - self._bytes_read
             if bytes_remaining <= 0:
-                raise MockInputFileError()
+                raise MockInputFileError(errno.EIO, "Mock IOError")
             
         data = "".join(islice(self._source, size))
         self._md5_sum.update(data)
@@ -57,3 +58,4 @@ class MockInputFile(object):
 
     def __len__(self):
         return self._total_size
+

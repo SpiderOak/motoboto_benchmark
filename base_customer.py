@@ -15,7 +15,7 @@ from lumberyard.http_connection import LumberyardHTTPError, \
         LumberyardRetryableHTTPError
 from lumberyard.http_util import compute_default_collection_name
 
-from mock_input_file import MockInputFile
+from mock_input_file import MockInputFile, MockInputFileError
 from mock_output_file import MockOutputFile
 from bucket_name_manager import BucketNameManager
 from key_name_manager import KeyNameManager
@@ -511,6 +511,9 @@ class BaseCustomer(object):
                     multipart_upload.upload_part_from_file(
                         input_file, part_num, replace
                     )
+                except MockInputFileError:
+                    self._log.info("MockInputFileError")
+                    return
                 except LumberyardRetryableHTTPError, instance:
                     if retry_count >= _max_delete_retries:
                         raise
@@ -570,6 +573,9 @@ class BaseCustomer(object):
 
             try:
                 key.set_contents_from_file(input_file, replace=replace) 
+            except MockInputFileError:
+                self._log.info("MockInputFileError")
+                return
             except LumberyardRetryableHTTPError, instance:
                 if retry_count >= _max_archive_retries:
                     raise
