@@ -476,6 +476,9 @@ class BaseCustomer(object):
         part_sizes = [base_size for _ in range(size / base_size)]
         part_sizes[-1] += size % base_size
 
+        self._log.info("initiate multipart %r %r %s" % (
+            bucket.name, key_name, size
+        ))
         retry_count = 0
         while not self._halt_event.is_set():
             try:
