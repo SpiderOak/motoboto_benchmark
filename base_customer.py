@@ -19,6 +19,7 @@ from mock_input_file import MockInputFile, MockInputFileError
 from mock_output_file import MockOutputFile
 from bucket_name_manager import BucketNameManager
 from key_name_manager import KeyNameManager
+from collection_ops_accounting import CollectionOpsAccounting
 
 class CustomerError(Exception):
     pass
@@ -51,6 +52,7 @@ class BaseCustomer(object):
         self._s3_connection = None
 
         self._buckets = dict()
+        self._bucket_accounting = dict()
         self._versioned_bucket_names = list()
         self._unversioned_bucket_names = list()
 
@@ -122,6 +124,7 @@ class BaseCustomer(object):
             ))
             self._buckets[bucket.name] = bucket
             self._bucket_name_manager.existing_bucket_name(bucket.name)
+            self._bucket_accounting[bucket.name] = CollectionOpsAccounting()
             keys = bucket.get_all_keys()
             for key in keys:
                 self._log.info("_initial_inventory found key %r, %r" % (
@@ -280,6 +283,7 @@ class BaseCustomer(object):
             return
         new_bucket = self._s3_connection.create_bucket(bucket_name)
         self._buckets[new_bucket.name] = new_bucket  
+        self._bucket_accounting[new_bucket.name] = CollectionOpsAccounting()
 
         return new_bucket
 
@@ -315,6 +319,7 @@ class BaseCustomer(object):
         bucket = self._buckets.pop(bucket_name)
         self._log.info("delete bucket {0} versioned={1}".format(
             bucket.name, bucket.versioning))
+        self._bucket_accounting[bucket_name].mark_end()
 
         if bucket.versioning:
             self._clear_versioned_bucket(bucket)
@@ -479,11 +484,15 @@ class BaseCustomer(object):
         self._log.info("initiate multipart %r %r %s" % (
             bucket.name, key_name, size
         ))
+        bucket_accounting = self._bucket_accounting[bucket.name]
+
         retry_count = 0
         while not self._halt_event.is_set():
+            bucket_accounting.increment_by("archive_request", 1)
             try:
                 multipart_upload = bucket.initiate_multipart_upload(key_name)
             except LumberyardRetryableHTTPError, instance:
+                bucket_accounting.increment_by("archive_error", 1)
                 if retry_count >= _max_delete_retries:
                     raise
                 self._log.warn("%s: retry in %s seconds" % (
@@ -515,9 +524,11 @@ class BaseCustomer(object):
                         input_file, part_num, replace
                     )
                 except MockInputFileError:
+                    bucket_accounting.increment_by("archive_error", 1)
                     self._log.info("MockInputFileError")
                     return
                 except LumberyardRetryableHTTPError, instance:
+                    bucket_accounting.increment_by("archive_error", 1)
                     if retry_count >= _max_delete_retries:
                         raise
                     self._log.warn("%s: retry in %s seconds" % (
@@ -538,6 +549,7 @@ class BaseCustomer(object):
             try:
                 multipart_upload.complete_upload()
             except LumberyardRetryableHTTPError, instance:
+                bucket_accounting.increment_by("archive_error", 1)
                 if retry_count >= _max_delete_retries:
                     raise
                 self._log.warn("%s: retry in %s seconds" % (
@@ -557,6 +569,7 @@ class BaseCustomer(object):
         if verification_key in self.key_verification:
             self._log.error("_archive_multipart duplicate key %s" % (
                 verification_key, ))
+        bucket_accounting.increment_by("archive_success", 1)
         self.key_verification[verification_key] = (size, None, )
 
     def _archive_one_file( self, bucket, key_name, replace, size, ):
@@ -567,19 +580,23 @@ class BaseCustomer(object):
             key.name, 
             bucket.versioning,
         ))
+        bucket_accounting = self._bucket_accounting[bucket.name]
 
         retry_count = 0
         force_error = random.randint(0, 99) < self._archive_failure_percent
         while not self._halt_event.is_set():
+            bucket_accounting.increment_by("archive_request", 1)
 
             input_file = MockInputFile(size, force_error)
 
             try:
                 key.set_contents_from_file(input_file, replace=replace) 
             except MockInputFileError:
+                bucket_accounting.increment_by("archive_error", 1)
                 self._log.info("MockInputFileError")
                 return
             except LumberyardRetryableHTTPError, instance:
+                bucket_accounting.increment_by("archive_error", 1)
                 if retry_count >= _max_archive_retries:
                     raise
                 self._log.warn("%s: retry in %s seconds" % (
@@ -595,6 +612,7 @@ class BaseCustomer(object):
             if verification_key in self.key_verification:
                 self._log.error("_archive_one_file duplicate key %s" % (
                     verification_key, ))
+            bucket_accounting.increment_by("archive_success", 1)
             self.key_verification[verification_key] = \
                     (size, input_file.md5_digest, )
 
@@ -613,6 +631,9 @@ class BaseCustomer(object):
         if len(keys) == 0:
             self._log.warn("skipping _retrieve_latest, no keys yet")
             return
+
+        bucket_accounting = self._bucket_accounting[bucket.name]
+
         key = random.choice(keys)
 
         self._log.info("retrieving %r from %r" % (
@@ -621,9 +642,11 @@ class BaseCustomer(object):
 
         output_file = MockOutputFile()
 
+        bucket_accounting.increment_by("retrieve_request", 1)
         try:
             key.get_contents_to_file(output_file)
         except LumberyardHTTPError, instance:
+            bucket_accounting.increment_by("retrieve_error", 1)
             if instance.status == 404:
                 self._log.error("%r not found in %r" % (
                     key.name, key._bucket.name, 
@@ -631,6 +654,7 @@ class BaseCustomer(object):
                 return
             raise
 
+        bucket_accounting.increment_by("retrieve_success", 1)
         self._verify_key(bucket, 
                          key, 
                          output_file.bytes_written, 
@@ -651,6 +675,9 @@ class BaseCustomer(object):
         if len(keys) == 0:
             self._log.warn("skipping _retrieve_version, no keys yet")
             return
+
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        
         key = random.choice(keys)
 
         self._log.info("retrieving %r %r from %r" % (
@@ -659,9 +686,11 @@ class BaseCustomer(object):
 
         output_file = MockOutputFile()
 
+        bucket_accounting.increment_by("retrieve_request", 1)
         try:
             key.get_contents_to_file(output_file, version_id=key.version_id)
         except LumberyardHTTPError, instance:
+            bucket_accounting.increment_by("retrieve_error", 1)
             if instance.status == 404:
                 self._log.error("%r not found in %r" % (
                     key.name, key._bucket.name, 
@@ -669,6 +698,8 @@ class BaseCustomer(object):
                 return
             raise
 
+        bucket_accounting.increment_by("retrieve_success", 1)
+        try:
         self._verify_key(bucket, 
                          key, 
                          output_file.bytes_written,
@@ -687,6 +718,9 @@ class BaseCustomer(object):
         if len(keys) == 0:
             self._log.warn("skipping _delete_key, no keys yet")
             return
+
+        bucket_accounting = self._bucket_accounting[bucket.name]
+
         key = random.choice(keys)
 
         self._log.info("_delete_key {0} {1}".format(bucket.name, key.name))
@@ -694,9 +728,11 @@ class BaseCustomer(object):
         retry_count = 0
         while not self._halt_event.is_set():
 
+            bucket_accounting.increment_by("delete_request", 1)
             try:
                 key.delete()
             except LumberyardRetryableHTTPError, instance:
+                bucket_accounting.increment_by("delete_error", 1)
                 if retry_count >= _max_delete_retries:
                     raise
                 self._log.warn("%s: retry in %s seconds" % (
@@ -707,6 +743,8 @@ class BaseCustomer(object):
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
                 break
+
+        bucket_accounting.increment_by("delete_success", 1)
 
         # if we delete a key, (not just a version)
         # we need to heave every version we are holding of that key
@@ -758,6 +796,8 @@ class BaseCustomer(object):
                 "skipping _delete_version, no keys with multiple versions")
             return
 
+        bucket_accounting = self._bucket_accounting[bucket.name]
+
         key = random.choice(keys_with_multiple_versions)
 
         verification_key = (bucket.name, key.name, key.version_id)
@@ -765,10 +805,12 @@ class BaseCustomer(object):
 
         retry_count = 0
         while not self._halt_event.is_set():
+            bucket_accounting.increment_by("delete_request", 1)
 
             try:
                 key.delete(version_id=key.version_id)
             except LumberyardRetryableHTTPError, instance:
+                bucket_accounting.increment_by("delete_error", 1)
                 if retry_count >= _max_delete_retries:
                     raise
                 self._log.warn("%s: retry in %s seconds" % (
@@ -778,6 +820,7 @@ class BaseCustomer(object):
                 retry_count += 1
                 self._log.warn("retry #%s" % (retry_count, ))
             else:
+                bucket_accounting.increment_by("delete_success", 1)
                 try:
                     del self.key_verification[verification_key]
                 except KeyError:
