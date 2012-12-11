@@ -112,6 +112,9 @@ class BaseCustomer(object):
         if self._test_script.get("verify-after", False):
             self._verify_after()
 
+        if self._test_script.get("audit-after", False):
+            self._audit_after()
+
         self._s3_connection.close()
         self._log.info("{0} errors".format(self._error_count))
 
@@ -250,6 +253,73 @@ class BaseCustomer(object):
             for key, value in self.key_verification.items():
                 self._error_count += 1
                 self._log.error("unreachable key {0} {1}".format(key, value))
+                
+    def _audit_after(self):
+        """
+        retrieve the space_usage for each bucket and compare it to our value
+        """
+        self._log.info("audit_after begin")
+        audit_error_count = 0
+        buckets = self._s3_connection.get_all_buckets()
+        for bucket in buckets:
+            result = bucket.get_space_used()
+            if not result["success"]:
+                audit_error_count += 1
+                self._log.error("audit {0} {1}".format(bucket.name, 
+                                                       result["error_message"]))
+                continue
+
+            # XXX: can't handle more than one day
+            if len(result["operational_stats"]) > 1:
+                audit_error_count += 1
+                self._log.error("audit {0} need a single day {1}".format(
+                    bucket.name, result["operational_stats"]))
+                continue
+
+            if len(result["operational_stats"]) == 0:
+                server_audit = {"archive_success" : 0,
+                                "success_bytes_in" : 0,
+                                "retrieve_success" : 0,
+                                "success_bytes_out" : 0,
+                                "delete_success" : 0,
+                                "listmatch_success" : 0, }
+            else:
+                server_audit = result["operational_stats"][0]
+
+            our_audit = self._bucket_accounting[bucket.name]
+            if our_audit["archive_success"] != server_audit["archive_success"]:
+                audit_error_count += 1
+                self._log.error("audit {0} archive_success {1} {2}".format(
+                    our_audit["archive_success"], 
+                    server_audit["archive_success"]))
+            if our_audit["success_bytes_in"] != server_audit["success_bytes_in"]:
+                audit_error_count += 1
+                self._log.error("audit {0} success_bytes_in {1} {2}".format(
+                    our_audit["success_bytes_in"], 
+                    server_audit["success_bytes_in"]))
+            if our_audit["retrieve_success"] != server_audit["retrieve_success"]:
+                audit_error_count += 1
+                self._log.error("audit {0} retrieve_success {1} {2}".format(
+                    our_audit["retrieve_success"], 
+                    server_audit["retrieve_success"]))
+            if our_audit["success_bytes_out"] != server_audit["success_bytes_out"]:
+                audit_error_count += 1
+                self._log.error("audit {0} success_bytes_out {1} {2}".format(
+                    our_audit["success_bytes_out"], 
+                    server_audit["success_bytes_out"]))
+            if our_audit["delete_success"] != server_audit["delete_success"]:
+                audit_error_count += 1
+                self._log.error("audit {0} delete_success {1} {2}".format(
+                    our_audit["delete_success"], 
+                    server_audit["delete_success"]))
+            if our_audit["listmatch_success"] != server_audit["listmatch_success"]:
+                audit_error_count += 1
+                self._log.error("audit {0} listmatch_success {1} {2}".format(
+                    our_audit["listmatch_success"], 
+                    server_audit["listmatch_success"]))
+
+        self._log.info("audit_after found {0} errors".format(audit_error_count))
+        self._error_count += audit_error_count
 
     def _load_frequency_table(self):
         """
@@ -699,7 +769,6 @@ class BaseCustomer(object):
             raise
 
         bucket_accounting.increment_by("retrieve_success", 1)
-        try:
         self._verify_key(bucket, 
                          key, 
                          output_file.bytes_written,

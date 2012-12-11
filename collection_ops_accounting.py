@@ -48,4 +48,6 @@ class CollectionOpsAccounting(object):
 
     def increment_by(self, key, value):
         self._data[key] += value
-
+    
+    def __getitem__(self, key):
+        return self._data[key]

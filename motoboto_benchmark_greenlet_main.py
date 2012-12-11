@@ -82,6 +82,10 @@ def main():
     except KeyboardInterrupt:
         log.info("KeyBoardInterrupt")
 
+    if test_script.get("audit-after", False):
+        print >>sys.stderr, "run redis_stats_collector, press return when done"
+        raw_input("waiting...")
+
     log.info("setting halt event")
     halt_event.set()
     
