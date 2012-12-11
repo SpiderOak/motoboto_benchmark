@@ -277,6 +277,7 @@ class BaseCustomer(object):
                 continue
 
             if len(result["operational_stats"]) == 0:
+                self._log.info("audit {0} no server data".format(bucket.name))
                 server_audit = {"archive_success" : 0,
                                 "success_bytes_in" : 0,
                                 "retrieve_success" : 0,
@@ -290,31 +291,37 @@ class BaseCustomer(object):
             if our_audit["archive_success"] != server_audit["archive_success"]:
                 audit_error_count += 1
                 self._log.error("audit {0} archive_success {1} {2}".format(
+                    bucket.name,
                     our_audit["archive_success"], 
                     server_audit["archive_success"]))
             if our_audit["success_bytes_in"] != server_audit["success_bytes_in"]:
                 audit_error_count += 1
                 self._log.error("audit {0} success_bytes_in {1} {2}".format(
+                    bucket.name,
                     our_audit["success_bytes_in"], 
                     server_audit["success_bytes_in"]))
             if our_audit["retrieve_success"] != server_audit["retrieve_success"]:
                 audit_error_count += 1
                 self._log.error("audit {0} retrieve_success {1} {2}".format(
+                    bucket.name,
                     our_audit["retrieve_success"], 
                     server_audit["retrieve_success"]))
             if our_audit["success_bytes_out"] != server_audit["success_bytes_out"]:
                 audit_error_count += 1
                 self._log.error("audit {0} success_bytes_out {1} {2}".format(
+                    bucket.name,
                     our_audit["success_bytes_out"], 
                     server_audit["success_bytes_out"]))
             if our_audit["delete_success"] != server_audit["delete_success"]:
                 audit_error_count += 1
                 self._log.error("audit {0} delete_success {1} {2}".format(
+                    bucket.name,
                     our_audit["delete_success"], 
                     server_audit["delete_success"]))
             if our_audit["listmatch_success"] != server_audit["listmatch_success"]:
                 audit_error_count += 1
                 self._log.error("audit {0} listmatch_success {1} {2}".format(
+                    bucket.name,
                     our_audit["listmatch_success"], 
                     server_audit["listmatch_success"]))
 
