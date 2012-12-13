@@ -128,7 +128,10 @@ class BaseCustomer(object):
             self._buckets[bucket.name] = bucket
             self._bucket_name_manager.existing_bucket_name(bucket.name)
             self._bucket_accounting[bucket.name] = CollectionOpsAccounting()
+            bucket_accounting = self._bucket_accounting[bucket.name]
+            bucket_accounting.increment_by("listmatch_request", 1)
             keys = bucket.get_all_keys()
+            bucket_accounting.increment_by("listmatch_success", 1)
             for key in keys:
                 self._log.info("_initial_inventory found key %r, %r" % (
                     key.name, bucket.name,
@@ -196,7 +199,9 @@ class BaseCustomer(object):
         self._log.info("verifying retrieves before")
         buckets = self._s3_connection.get_all_buckets()
         for bucket in buckets:
+            bucket_accounting = self._bucket_accounting[bucket.name]
             if bucket.versioning:
+                bucket_accounting.increment_by("listmatch_request", 1)
                 for key in bucket.get_all_versions():
                     result = key.get_contents_as_string(
                         version_id=key.version_id
@@ -208,7 +213,9 @@ class BaseCustomer(object):
                             verification_key, ))
                     self.key_verification[verification_key] = \
                         (len(result), md5_sum.digest(), )
+                bucket_accounting.increment_by("listmatch_succesws", 1)
             else:
+                bucket_accounting.increment_by("listmatch_request", 1)
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
@@ -218,6 +225,7 @@ class BaseCustomer(object):
                             verification_key, ))
                     self.key_verification[verification_key] = \
                         (len(result), md5_sum.digest(), )
+                bucket_accounting.increment_by("listmatch_success", 1)
 
     def _verify_after(self):
         """
@@ -227,7 +235,9 @@ class BaseCustomer(object):
         self._log.info("verifying retrieves after")
         buckets = self._s3_connection.get_all_buckets()
         for bucket in buckets:
+            bucket_accounting = self._bucket_accounting[bucket.name]
             if bucket.versioning:
+                bucket_accounting.increment_by("listmatch_request", 1)
                 for key in bucket.get_all_versions():
                     result = key.get_contents_as_string(
                         version_id=key.version_id
@@ -237,7 +247,9 @@ class BaseCustomer(object):
                                            key, 
                                            len(result), 
                                            md5_sum.digest())
+                bucket_accounting.increment_by("listmatch_success", 1)
             else:
+                bucket_accounting.increment_by("listmatch_request", 1)
                 for key in bucket.get_all_keys():
                     result = key.get_contents_as_string()
                     md5_sum = hashlib.md5(result)
@@ -245,6 +257,7 @@ class BaseCustomer(object):
                                            key, 
                                            len(result), 
                                            md5_sum.digest())
+            bucket_accounting.increment_by("listmatch_success", 1)
 
         
         if len(self.key_verification) > 0:
@@ -416,7 +429,10 @@ class BaseCustomer(object):
         else:
             del self._versioned_bucket_names[i]
 
+        bucket_accounting = self._bucket_accounting[bucket.name]
+
         # delete all the keys (or versions) for the bucket
+        bucket_accounting.increment_by("listmatch_request", 1)
         for key in bucket.get_all_versions():
             verification_key = (bucket.name, key.name, key.version_id)
             self._log.info("_delete_bucket deleting version {0}".format(
@@ -424,9 +440,11 @@ class BaseCustomer(object):
             retry_count = 0
             while not self._halt_event.is_set():
 
+                bucket_accounting.increment_by("delete_request", 1)
                 try:
                     key.delete(version_id=key.version_id)
                 except LumberyardRetryableHTTPError, instance:
+                    bucket_accounting.increment_by("delete_error", 1)
                     if retry_count >= _max_delete_retries:
                         raise
                     self._log.warn("%s: retry in %s seconds" % (
@@ -436,6 +454,7 @@ class BaseCustomer(object):
                     retry_count += 1
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
+                    bucket_accounting.increment_by("delete_success", 1)
                     try:
                         del self.key_verification[verification_key]
                     except KeyError:
@@ -443,6 +462,7 @@ class BaseCustomer(object):
                             "_delete_bucket verification key not found %s" % (
                                 verification_key, ))
                     break
+        bucket_accounting.increment_by("listmatch_success", 1)
 
     def _clear_unversioned_bucket(self, bucket):
         try:
@@ -453,6 +473,8 @@ class BaseCustomer(object):
         else:
             del self._unversioned_bucket_names[i]
 
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        bucket_accounting.increment_by("listmatch_request", 1)
         for key in bucket.get_all_keys():
             verification_key = (bucket.name, key.name, key.version_id)
             self._log.info("_delete_bucket deleting key {0}".format(
@@ -460,9 +482,11 @@ class BaseCustomer(object):
             retry_count = 0
             while not self._halt_event.is_set():
 
+                bucket_accounting.increment_by("delete_request", 1)
                 try:
                     key.delete()
                 except LumberyardRetryableHTTPError, instance:
+                    bucket_accounting.increment_by("delete_error", 1)
                     if retry_count >= _max_delete_retries:
                         raise
                     self._log.warn("%s: retry in %s seconds" % (
@@ -472,6 +496,7 @@ class BaseCustomer(object):
                     retry_count += 1
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
+                    bucket_accounting.increment_by("delete_success", 1)
                     try:
                         del self.key_verification[verification_key]
                     except KeyError:
@@ -479,6 +504,7 @@ class BaseCustomer(object):
                             "_delete_bucket verification key not found %s" % (
                                 verification_key, ))
                     break
+        bucket_accounting.increment_by("listmatch_success", 1)
 
     def _archive_new_key(self):
         """
@@ -501,9 +527,13 @@ class BaseCustomer(object):
         bucket_name = random.choice(self._versioned_bucket_names)
         bucket = self._buckets[bucket_name]
 
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        bucket_accounting.increment_by("listmatch_request", 1)
+        keys = bucket.get_all_keys()
+        bucket_accounting.increment_by("listmatch_success", 1)
+
         # if this bucket doesn't have any keys yet, go ahead and add
         # a new one. Otherwise, add a new version of an existing key
-        keys = bucket.get_all_keys()
         if len(keys) == 0:
             key_name = self._key_name_generator.next()
         else:
@@ -521,9 +551,13 @@ class BaseCustomer(object):
         bucket_name = random.choice(self._unversioned_bucket_names)
         bucket = self._buckets[bucket_name]
 
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        bucket_accounting.increment_by("listmatch_request", 1)
+        keys = bucket.get_all_keys()
+        bucket_accounting.increment_by("listmatch_success", 1)
+
         # if this bucket doesn't have any keys yet, go ahead and add
         # a new one. Otherwise, write over an existing key
-        keys = bucket.get_all_keys()
         if len(keys) == 0:
             key_name = self._key_name_generator.next()
         else:
@@ -690,6 +724,8 @@ class BaseCustomer(object):
                 self._log.error("_archive_one_file duplicate key %s" % (
                     verification_key, ))
             bucket_accounting.increment_by("archive_success", 1)
+            # we count this as 'bytes in' because that's what the server counts
+            bucket_accounting.increment_by("success_bytes_in", size)
             self.key_verification[verification_key] = \
                     (size, input_file.md5_digest, )
 
@@ -704,12 +740,15 @@ class BaseCustomer(object):
             return
         bucket_name = random.choice(self._unversioned_bucket_names)
         bucket = self._buckets[bucket_name]
+
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        bucket_accounting.increment_by("listmatch_request", 1)
         keys = bucket.get_all_keys()
+        bucket_accounting.increment_by("listmatch_success", 1)
+
         if len(keys) == 0:
             self._log.warn("skipping _retrieve_latest, no keys yet")
             return
-
-        bucket_accounting = self._bucket_accounting[bucket.name]
 
         key = random.choice(keys)
 
@@ -732,6 +771,9 @@ class BaseCustomer(object):
             raise
 
         bucket_accounting.increment_by("retrieve_success", 1)
+        # we count this as 'bytes out' because that's what the server counts
+        bucket_accounting.increment_by("success_bytes_out",
+                                       output_file.bytes_written)
         self._verify_key(bucket, 
                          key, 
                          output_file.bytes_written, 
@@ -748,13 +790,16 @@ class BaseCustomer(object):
             return
         bucket_name = random.choice(self._versioned_bucket_names)
         bucket = self._buckets[bucket_name]
+        bucket_accounting = self._bucket_accounting[bucket.name]
+
+        bucket_accounting.increment_by("listmatch_request", 1)
         keys = bucket.get_all_versions()
+        bucket_accounting.increment_by("listmatch_success", 1)
+
         if len(keys) == 0:
             self._log.warn("skipping _retrieve_version, no keys yet")
             return
 
-        bucket_accounting = self._bucket_accounting[bucket.name]
-        
         key = random.choice(keys)
 
         self._log.info("retrieving %r %r from %r" % (
@@ -776,6 +821,9 @@ class BaseCustomer(object):
             raise
 
         bucket_accounting.increment_by("retrieve_success", 1)
+        # we count this as 'bytes out' because that's what the server counts
+        bucket_accounting.increment_by("success_bytes_out",
+                                       output_file.bytes_written)
         self._verify_key(bucket, 
                          key, 
                          output_file.bytes_written,
@@ -790,12 +838,15 @@ class BaseCustomer(object):
             return
         bucket_name = random.choice(self._unversioned_bucket_names)
         bucket = self._buckets[bucket_name]
+
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        bucket_accounting.increment_by("listmatch_request", 1)
         keys = bucket.get_all_keys()
+        bucket_accounting.increment_by("listmatch_success", 1)
+
         if len(keys) == 0:
             self._log.warn("skipping _delete_key, no keys yet")
             return
-
-        bucket_accounting = self._bucket_accounting[bucket.name]
 
         key = random.choice(keys)
 
