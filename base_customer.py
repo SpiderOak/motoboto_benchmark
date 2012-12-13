@@ -898,7 +898,10 @@ class BaseCustomer(object):
         bucket_name = random.choice(self._versioned_bucket_names)
         bucket = self._buckets[bucket_name]
 
+        bucket_accounting = self._bucket_accounting[bucket.name]
+        bucket_accounting.increment_by("listmatch_request", 1)
         keys = bucket.get_all_versions()
+        bucket_accounting.increment_by("listmatch_success", 1)
 
         if len(keys) == 0:
             self._log.warn("skipping _delete_version, no keys yet")
