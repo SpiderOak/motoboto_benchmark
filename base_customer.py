@@ -127,6 +127,10 @@ class BaseCustomer(object):
             ))
             self._buckets[bucket.name] = bucket
             self._bucket_name_manager.existing_bucket_name(bucket.name)
+            if bucket.versioning:
+                self._versioned_bucket_names.append(bucket.name)
+            else:
+                self._unversioned_bucket_names.append(bucket.name)
             self._bucket_accounting[bucket.name] = CollectionOpsAccounting()
             bucket_accounting = self._bucket_accounting[bucket.name]
             bucket_accounting.increment_by("listmatch_request", 1)
