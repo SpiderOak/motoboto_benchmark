@@ -458,14 +458,14 @@ class BaseCustomer(object):
                     retry_count += 1
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
-                    bucket_accounting.increment_by("delete_success", 1)
-                    try:
-                        del self.key_verification[verification_key]
-                    except KeyError:
-                        self._log.error(
-                            "_delete_bucket verification key not found %s" % (
-                                verification_key, ))
                     break
+            bucket_accounting.increment_by("delete_success", 1)
+            try:
+                del self.key_verification[verification_key]
+            except KeyError:
+                self._log.error(
+                    "_delete_bucket verification key not found %s" % (
+                        verification_key, ))
         bucket_accounting.increment_by("listmatch_success", 1)
 
     def _clear_unversioned_bucket(self, bucket):
@@ -500,14 +500,14 @@ class BaseCustomer(object):
                     retry_count += 1
                     self._log.warn("retry #%s" % (retry_count, ))
                 else:
-                    bucket_accounting.increment_by("delete_success", 1)
-                    try:
-                        del self.key_verification[verification_key]
-                    except KeyError:
-                        self._log.error(
-                            "_delete_bucket verification key not found %s" % (
-                                verification_key, ))
                     break
+            bucket_accounting.increment_by("delete_success", 1)
+            try:
+                del self.key_verification[verification_key]
+            except KeyError:
+                self._log.error(
+                    "_delete_bucket verification key not found %s" % (
+                        verification_key, ))
         bucket_accounting.increment_by("listmatch_success", 1)
 
     def _archive_new_key(self):
