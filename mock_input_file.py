@@ -7,11 +7,22 @@ bytes
 """
 import errno
 import hashlib
-from itertools import cycle, islice
-from string import printable
+import sys
 
 class MockInputFileError(IOError):
     pass
+
+def make_loop_read(fileobj):
+    "make a looping read on a file object"
+    def _loop_read(amount):
+        data = fileobj.read(amount)
+        if len(data) == amount:
+            return data
+        fileobj.seek(0)
+        return data + _loop_read(amount - len(data))
+    return _loop_read
+
+FAST_DATA_SOURCE = make_loop_read(open(sys.executable, "rb"))
 
 class MockInputFile(object):
     """
@@ -25,9 +36,6 @@ class MockInputFile(object):
         self._bytes_read = 0
         self._md5_sum = hashlib.md5()
 
-        # don't use the resources needed for random data
-        self._source = cycle(printable)
-
     def read(self, size=None):
         bytes_remaining = self._total_size - self._bytes_read
         if bytes_remaining == 0:
@@ -37,7 +45,7 @@ class MockInputFile(object):
             if self._force_error:
                 raise MockInputFileError(errno.EIO, "Mock IOError")
             self._bytes_read = self._total_size
-            data = "".join(islice(self._source, bytes_remaining))
+            data = FAST_DATA_SOURCE(bytes_remaining)
             self._md5_sum.update(data)
             return data
 
@@ -48,7 +56,7 @@ class MockInputFile(object):
             if bytes_remaining <= 0:
                 raise MockInputFileError(errno.EIO, "Mock IOError")
             
-        data = "".join(islice(self._source, size))
+        data = FAST_DATA_SOURCE(size)
         self._md5_sum.update(data)
         return data
 
