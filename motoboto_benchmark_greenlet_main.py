@@ -5,6 +5,7 @@ motoboto_benchmark_greelnet_main.py
 A process that serves as a client to the SpiderOak lumberyard storage system
 Communication is through zeromq
 """
+import random
 import json
 import logging
 import os
@@ -73,7 +74,7 @@ def main():
         )
         customer = GreenletCustomer(halt_event, user_identity, test_script)
         customer.link_exception(_unhandled_greenlet_exception)
-        customer.start()
+        customer.start_later(random.uniform(0.0, 15.0))
         customer_list.append(customer)
 
     log.info("waiting")
