@@ -213,7 +213,7 @@ class BaseCustomer(object):
                             verification_key, ))
                     self.key_verification[verification_key] = \
                         (len(result), md5_sum.digest(), )
-                bucket_accounting.increment_by("listmatch_succesws", 1)
+                bucket_accounting.increment_by("listmatch_success", 1)
             else:
                 bucket_accounting.increment_by("listmatch_request", 1)
                 for key in bucket.get_all_keys():
